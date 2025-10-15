@@ -50,7 +50,8 @@ def load_raw_data_optimized(file_path, file_data=None):
 
         elif file_extension == 'txt':
             try:
-                 df_raw = pd.read_table(source, dtype={'Zip': str}, sep=r'[,\t]+', engine='python', skipinitialspace=True, on_bad_lines='skip')
+                # Optimized for CSV and TSV inside TXT
+                df_raw = pd.read_table(source, dtype={'Zip': str}, sep=r'[,\t]+', engine='python', skipinitialspace=True, on_bad_lines='skip')
             except:
                 df_raw = pd.read_table(source, dtype={'Zip': str}, sep=r'[,\t]+', engine='python', encoding='latin-1', skipinitialspace=True, on_bad_lines='skip')
         
@@ -58,7 +59,7 @@ def load_raw_data_optimized(file_path, file_data=None):
             raise ValueError("Unsupported file format.")
             
         if df_raw.empty:
-             raise ValueError("File is empty or could not be read properly.")
+            raise ValueError("File is empty or could not be read properly.")
             
     except Exception as e:
         raise Exception(f"Could not read the master data file. Error: {e}")
@@ -85,6 +86,7 @@ st.set_page_config(page_title="Bulk RIS Calculator", layout="wide")
 st.title("📦 Bulk RIS (Regional In Stock) Distance Calculator")
 st.markdown("**(Optimized for large datasets)** Use Sections 1 & 2 for calculation. Use the sidebar to update your master Postal Code data.")
 
+# Assuming this file exists locally on the server where Streamlit is running
 RAW_DATA_PATH = "RIS checker - Rawdata.xlsx" 
 
 # Initial Load logic
@@ -149,7 +151,7 @@ SHIP_TO_COL = 'Ship To Postal Code'
 
 
 if uploaded_file is not None:
-    df_orders = pd.DataFrame() # FIX 1: Initialize df_orders safely
+    df_orders = pd.DataFrame() # Initialize df_orders safely
     
     # --- Data Reading and Calculation Process (OPTIMIZED LOOKUP) ---
     with st.spinner('Processing and calculating distances...'):
@@ -162,11 +164,12 @@ if uploaded_file is not None:
             elif file_extension == 'csv':
                 df_orders = pd.read_csv(uploaded_file, dtype=dtype_map, encoding='utf-8')
             elif file_extension == 'txt':
-                 df_orders = pd.read_table(uploaded_file, dtype=dtype_map, sep=r'[,\t]+', engine='python', skipinitialspace=True, on_bad_lines='skip')
+                df_orders = pd.read_table(uploaded_file, dtype=dtype_map, sep=r'[,\t]+', engine='python', skipinitialspace=True, on_bad_lines='skip')
             else:
-                 raise ValueError("Unsupported order file format.")
+                raise ValueError("Unsupported order file format.")
 
             required_cols = [SHIP_FROM_COL, SHIP_TO_COL]
+            df_orders.columns = df_orders.columns.str.strip() # Strip spaces from column names
             if not all(col in df_orders.columns for col in required_cols):
                 st.error(f"❌ Error: The uploaded file must contain the columns: {required_cols}. Please check spelling.")
                 st.stop()
@@ -209,6 +212,7 @@ if uploaded_file is not None:
     missing_dest = df_final[df_final['Lat_Dest'].isna()][SHIP_TO_COL].unique()
     
     all_missing_pincodes = pd.Series(np.concatenate([missing_origin, missing_dest])).unique()
+    # Filter to only include pincodes not already in the master map
     pincodes_to_add = [p for p in all_missing_pincodes if p not in current_lat_map] 
 
 
@@ -238,7 +242,7 @@ if uploaded_file is not None:
                 mime='text/csv',
                 use_container_width=True
             )
-            st.caption("Update data in this file.")
+            st.caption("Update Latitude/Longitude data in this file.")
         
         # Quick Upload (Right Column)
         with col_dl2:
@@ -274,10 +278,11 @@ if uploaded_file is not None:
     else:
         st.info("No missing postal codes found! Calculation is complete.")
 
-    # --- 5. Final Result Display (Moved to bottom) ---
+    # --- 5. Final Result Display and Download ---
     st.subheader("5. Full Calculated Results Preview")
     
     display_cols = ['RIS_Distance_KM', SHIP_FROM_COL, SHIP_TO_COL] 
+    # Add optional columns if they exist
     if 'Order ID' in df_final.columns: display_cols.insert(1, 'Order ID')
     if 'ASIN' in df_final.columns: display_cols.insert(1, 'ASIN') 
         
@@ -298,14 +303,37 @@ if uploaded_file is not None:
     else:
         st.success("🎉 All distances calculated successfully!")
         
+    # --- Download Buttons (The requested change is here) ---
+    
+    # 1. Create columns for side-by-side buttons
+    col_final_dl, col_final_merge = st.columns(2)
+    
     # Download final calculated result
-    csv_export = df_final[display_cols].to_csv(index=False).encode('utf-8')
-    st.download_button(
-        label="Download Full Results as CSV 💾",
-        data=csv_export,
-        file_name='RIS_Distance_Calculated_Results.csv',
-        mime='text/csv',
-    )
+    csv_export = df_final.to_csv(index=False).encode('utf-8')
+    
+    with col_final_dl:
+        st.download_button(
+            label="Download Full Results as CSV 💾",
+            data=csv_export,
+            file_name='RIS_Distance_Calculated_Results.csv',
+            mime='text/csv',
+            use_container_width=True
+        )
+        
+    with col_final_merge:
+        # New "Merge with MTR" button
+        if st.button(
+            label="Merge this Data with MTR",
+            key="merge_with_mtr_button",
+            use_container_width=True,
+            help="This button is a placeholder. You would implement your custom logic here to merge RIS results with your MTR data."
+        ):
+            # Placeholder action for MTR Merge. 
+            # Replace this block with your actual pandas merge logic later.
+            st.info("Merge with MTR function triggered! Please implement your specific data merging logic in the code.")
+            
+    # --------------------------------------------------------
+
 else:
     # If no file is uploaded in Section 1, prompt the user.
     st.info("👆 Please upload your Order Data File in Section 1 to start the calculation.")
