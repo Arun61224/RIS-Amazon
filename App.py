@@ -157,12 +157,13 @@ if uploaded_file is not None:
     # --- Data Reading and Calculation Process (OPTIMIZED LOOKUP) ---
     with st.spinner('Processing and calculating distances...'):
         try:
-            # Map for ensuring postal codes, SKU, and Quantity are read as strings
-            dtype_map = {SHIP_FROM_COL: str, SHIP_TO_COL: str, SKU_COL: str, QTY_COL: str} 
+            # Map: Pincodes/Sku as strings, but Quantity will be converted to numeric after reading
+            dtype_map = {SHIP_FROM_COL: str, SHIP_TO_COL: str, SKU_COL: str} 
             file_extension = uploaded_file.name.split('.')[-1].lower()
             
             # File reading logic
             if file_extension in ['xlsx', 'xlsm']:
+                # Read Quantity as string initially to prevent reading errors, then coerce to numeric
                 df_orders = pd.read_excel(uploaded_file, dtype=dtype_map)
             elif file_extension == 'csv':
                 df_orders = pd.read_csv(uploaded_file, dtype=dtype_map, encoding='utf-8')
@@ -182,9 +183,11 @@ if uploaded_file is not None:
             # Data cleaning/typing
             df_orders[SHIP_FROM_COL] = df_orders[SHIP_FROM_COL].astype(str).str.strip()
             df_orders[SHIP_TO_COL] = df_orders[SHIP_TO_COL].astype(str).str.strip()
-            # Ensure Sku and Quantity are also clean
+            # Ensure Sku is clean
             df_orders[SKU_COL] = df_orders[SKU_COL].astype(str).str.strip()
-            df_orders[QTY_COL] = df_orders[QTY_COL].astype(str).str.strip()
+            
+            # FIX: Convert Quantity to numeric, forcing errors to NaN. This resolves the Streamlit data frame display issue.
+            df_orders[QTY_COL] = pd.to_numeric(df_orders[QTY_COL].astype(str).str.strip(), errors='coerce')
 
 
         except Exception as e:
@@ -295,7 +298,7 @@ if uploaded_file is not None:
     display_cols = ['RIS_Distance_KM', SHIP_FROM_COL, SHIP_TO_COL, SKU_COL, QTY_COL] 
     
     # Add other common useful columns if they exist
-    if 'Order ID' in df_final.columns: display_cols.insert(1, 'Order ID')
+    if 'Order Id' in df_final.columns: display_cols.insert(1, 'Order Id')
     # If file had 'ASIN' but not 'Sku', or vice versa, we make sure to include it if possible
     if 'ASIN' in df_final.columns and 'ASIN' != SKU_COL: display_cols.insert(1, 'ASIN') 
         
