@@ -139,41 +139,18 @@ if not st.session_state['master_data_loaded']:
 
 
 st.subheader("1. Upload Order File for RIS Calculation")
-
-# --- NEW: User Input for Column Names ---
-col_input1, col_input2 = st.columns(2)
-
-with col_input1:
-    ship_from_col_input = st.text_input(
-        "Enter **'Ship From'** Postal Code Column Name:",
-        value='Ship From Postal Code',
-        key="ship_from_col_input"
-    ).strip()
-
-with col_input2:
-    ship_to_col_input = st.text_input(
-        "Enter **'Ship To'** Postal Code Column Name:",
-        value='Ship To Postal Code',
-        key="ship_to_col_input"
-    ).strip()
-    
-SHIP_FROM_COL = ship_from_col_input
-SHIP_TO_COL = ship_to_col_input
-
 # --- File Uploader ---
 uploaded_file = st.file_uploader(
-    f"Upload your Order Data File (Must contain: '{SHIP_FROM_COL}' & '{SHIP_TO_COL}')", 
+    "Upload your Order Data File (CSV, TXT, or Excel) - Must contain: 'Ship From Postal Code' & 'Ship To Postal Code'", 
     type=['csv', 'xlsx', 'xlsm', 'txt'],
     key="order_file_uploader"
 )
 
+SHIP_FROM_COL = 'Ship From Postal Code'
+SHIP_TO_COL = 'Ship To Postal Code'
+
 
 if uploaded_file is not None:
-    # Validation Check for Column Names
-    if not SHIP_FROM_COL or not SHIP_TO_COL:
-        st.error("❌ Error: Please enter valid column names for both 'Ship From' and 'Ship To' postal codes.")
-        st.stop()
-
     df_orders = pd.DataFrame() # Initialize df_orders safely
     
     # --- Data Reading and Calculation Process (OPTIMIZED LOOKUP) ---
@@ -194,7 +171,7 @@ if uploaded_file is not None:
             required_cols = [SHIP_FROM_COL, SHIP_TO_COL]
             df_orders.columns = df_orders.columns.str.strip() # Strip spaces from column names
             if not all(col in df_orders.columns for col in required_cols):
-                st.error(f"❌ Error: The uploaded file must contain the columns: {required_cols}. Found: {list(df_orders.columns)}")
+                st.error(f"❌ Error: The uploaded file must contain the columns: {required_cols}. Please check spelling.")
                 st.stop()
                 
             df_orders[SHIP_FROM_COL] = df_orders[SHIP_FROM_COL].astype(str).str.strip()
@@ -305,7 +282,6 @@ if uploaded_file is not None:
     st.subheader("5. Full Calculated Results Preview")
     
     # --- CHANGE 1: DEFINING COLUMNS WITHOUT COORDS ---
-    # NOTE: SHIP_FROM_COL and SHIP_TO_COL now use the user's input names
     display_cols = ['RIS_Distance_KM', SHIP_FROM_COL, SHIP_TO_COL] 
     # Add optional columns if they exist
     if 'Order ID' in df_final.columns: display_cols.insert(1, 'Order ID')
