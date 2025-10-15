@@ -2,9 +2,9 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import io
-# openpyxl ki zarurat hai .xlsx files padhne ke liye
+# openpyxl ki zarurat hai .xlsx files padhne ke liye, yeh requirements.txt mein hona chahiye
 
-# --- 1. Distance Calculation Logic (Same) ---
+# --- 1. Distance Calculation Logic ---
 
 def calculate_distance(lat1, lon1, lat2, lon2):
     """Calculates Great-Circle Distance (km) using Spherical Law of Cosines."""
@@ -28,16 +28,25 @@ if 'df_zip_data' not in st.session_state:
 def load_raw_data(file_path):
     """Loads the main ZIP data file using pd.read_excel for .xlsx format."""
     try:
-        # pd.read_excel ka use, jo openpyxl engine se XLSX padhega
-        # dtype={'Zip': str} ensures that Pincodes are read as strings (important for VLOOKUP equivalent)
-        df_raw = pd.read_excel(file_path, dtype={'Zip': str}, sheet_name=0) 
+        # pd.read_excel use karein. Sheet index 0 (first sheet) assume karte hain.
+        # Agar aapki sheet ka naam 'RawData' hai, to sheet_name='RawData' use karein.
+        df_raw = pd.read_excel(file_path, 
+                               dtype={'Zip': str}, 
+                               sheet_name=0) 
+                               
+    except ValueError as ve:
+        # Sheet not found, ya file format issue
+        raise FileNotFoundError(f"Error reading Excel sheet. Check sheet_name or ensure 'Zip', 'Latitude', 'Longitude' columns are present. Error: {ve}")
     except Exception as e:
-        # Agar koi bhi error ho toh raise kar do
-        raise FileNotFoundError(f"Could not read the file {file_path} as XLSX. Error: {e}")
+        # Other potential issues (like missing openpyxl)
+        raise Exception(f"Could not read the file {file_path}. Is openpyxl installed? Error: {e}")
     
-    # Ensure correct column names and set 'Zip' as index
-    # Assuming columns are 'Zip', 'Latitude', 'Longitude'
-    df_raw = df_raw[['Zip', 'Latitude', 'Longitude']].set_index('Zip')
+    # Column verification and index set
+    required_raw_cols = ['Zip', 'Latitude', 'Longitude']
+    if not all(col in df_raw.columns for col in required_raw_cols):
+        raise ValueError(f"Raw data file must contain columns: {required_raw_cols}")
+        
+    df_raw = df_raw[required_raw_cols].set_index('Zip')
     return df_raw
 
 # --- 3. Main Streamlit Application UI (PATH UPDATED) ---
@@ -55,7 +64,7 @@ try:
         st.session_state['df_zip_data'] = df_initial
         
 except Exception as e:
-    st.error(f"❌ Critical Error: ZIP-Lat/Lon mapping file ('{RAW_DATA_PATH}') could not be loaded. Please ensure file is named **RIS checker - Rawdata.xlsx** and is in the repository root. Error: {e}")
+    st.error(f"❌ Critical Error: ZIP-Lat/Lon mapping file ('{RAW_DATA_PATH}') could not be loaded. Please ensure file is named **RIS checker - Rawdata.xlsx** (Case-sensitive) and is in the repository root. Error: {e}")
     st.stop()
 
 
