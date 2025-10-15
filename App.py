@@ -63,6 +63,9 @@ def load_raw_data_optimized(file_path, file_data=None):
              raise ValueError("File is empty or could not be read properly.")
             
     except Exception as e:
+        # Re-raise the exception with context for debugging
+        if isinstance(e, FileNotFoundError):
+             raise FileNotFoundError(f"Master data file not found at path: {file_path}") from e
         raise Exception(f"Could not read the master data file. Error: {e}")
     
     required_raw_cols = ['Zip', 'Latitude', 'Longitude']
@@ -103,7 +106,7 @@ if not st.session_state['master_data_loaded']:
     except FileNotFoundError:
         # Graceful handling if the default file is missing
         st.session_state['master_data_loaded'] = False
-        st.sidebar.warning(f"⚠️ Default Master File '{RAW_DATA_PATH}' not found. Please upload a file below.")
+        st.sidebar.warning(f"⚠️ Default Master File '{RAW_DATA_PATH}' not found. Please upload a file in Section 7.")
     except Exception as e:
         # Handle other loading errors
         st.session_state['master_data_loaded'] = False
@@ -140,7 +143,6 @@ with st.sidebar:
     )
     handle_master_update(uploaded_master_file) 
 
-# --- Conditional stop removed: The App should now show upload options even if master data is missing ---
 
 # ------------------------------------------------------------------------------------------------------------------------------------
 
@@ -163,8 +165,9 @@ ORDER_ID_COL = 'Order Id' # Added this constant based on your header image
 if uploaded_file is not None:
     # CRITICAL CHECK: Ensure master data map is available before calculation
     if not st.session_state['zip_lat_map']:
-        st.error("⚠️ Master Postal Code data is required for calculation. Please upload the master file using the sidebar (Section 7).")
-        st.stop()
+        st.error("⚠️ Master Postal Code data is required for calculation. Please upload the master file using the sidebar (Section 7) first.")
+        # We don't use st.stop() here anymore, allowing the rest of the app to render after this error message.
+        pass
         
     df_orders = pd.DataFrame() # Initialize df_orders safely
     
@@ -216,39 +219,50 @@ if uploaded_file is not None:
         except Exception as e:
             st.error(f"❌ Error reading or validating file: {e}")
             st.stop()
-            
-        current_lat_map = st.session_state['zip_lat_map']
-        current_lon_map = st.session_state['zip_lon_map']
+        
+        # --- Only proceed with calculation if map data is actually present ---
+        if st.session_state['zip_lat_map']:
+            current_lat_map = st.session_state['zip_lat_map']
+            current_lon_map = st.session_state['zip_lon_map']
 
-        # Optimized Coordinate Lookup
-        df_orders['Lat_Origin'] = df_orders[SHIP_FROM_COL].apply(lambda x: current_lat_map.get(x))
-        df_orders['Lon_Origin'] = df_orders[SHIP_FROM_COL].apply(lambda x: current_lon_map.get(x))
-        df_orders['Lat_Dest'] = df_orders[SHIP_TO_COL].apply(lambda x: current_lat_map.get(x))
-        df_orders['Lon_Dest'] = df_orders[SHIP_TO_COL].apply(lambda x: current_lon_map.get(x))
-        
-        df_final = df_orders 
-        
-        # Distance Calculation
-        df_final['RIS_Distance_KM'] = df_final.apply(lambda row: 
-            calculate_distance(
-                row['Lat_Origin'], row['Lon_Origin'], 
-                row['Lat_Dest'], row['Lon_Dest']
-            ) 
-            if pd.notna(row['Lat_Origin']) and pd.notna(row['Lon_Origin']) and \
-               pd.notna(row['Lat_Dest']) and pd.notna(row['Lon_Dest'])
-            else 'PINCODE_NOT_FOUND', axis=1
-        )
-    
+            # Optimized Coordinate Lookup
+            df_orders['Lat_Origin'] = df_orders[SHIP_FROM_COL].apply(lambda x: current_lat_map.get(x))
+            df_orders['Lon_Origin'] = df_orders[SHIP_FROM_COL].apply(lambda x: current_lon_map.get(x))
+            df_orders['Lat_Dest'] = df_orders[SHIP_TO_COL].apply(lambda x: current_lat_map.get(x))
+            df_orders['Lon_Dest'] = df_orders[SHIP_TO_COL].apply(lambda x: current_lon_map.get(x))
+            
+            df_final = df_orders 
+            
+            # Distance Calculation
+            df_final['RIS_Distance_KM'] = df_final.apply(lambda row: 
+                calculate_distance(
+                    row['Lat_Origin'], row['Lon_Origin'], 
+                    row['Lat_Dest'], row['Lon_Dest']
+                ) 
+                if pd.notna(row['Lat_Origin']) and pd.notna(row['Lon_Origin']) and \
+                   pd.notna(row['Lat_Dest']) and pd.notna(row['Lon_Dest'])
+                else 'PINCODE_NOT_FOUND', axis=1
+            )
+        else:
+            # If map data is missing, still display the data frame but skip distance calculation
+            df_final = df_orders
+            df_final['RIS_Distance_KM'] = 'MASTER_DATA_MISSING'
+
+
     st.subheader("2. Calculation Results")
 
 
     # --- 4. Missing Postal Code Identification (PREPARE DOWNLOAD) ---
     
-    missing_origin = df_final[df_final['Lat_Origin'].isna()][SHIP_FROM_COL].unique()
-    missing_dest = df_final[df_final['Lat_Dest'].isna()][SHIP_TO_COL].unique()
-    
-    all_missing_pincodes = pd.Series(np.concatenate([missing_origin, missing_dest])).unique()
-    pincodes_to_add = [p for p in all_missing_pincodes if p not in current_lat_map] 
+    # We only check for missing pincodes if a map was actually loaded
+    if st.session_state['zip_lat_map']:
+        missing_origin = df_final[df_final['Lat_Origin'].isna()][SHIP_FROM_COL].unique()
+        missing_dest = df_final[df_final['Lat_Dest'].isna()][SHIP_TO_COL].unique()
+        
+        all_missing_pincodes = pd.Series(np.concatenate([missing_origin, missing_dest])).unique()
+        pincodes_to_add = [p for p in all_missing_pincodes if p not in current_lat_map] 
+    else:
+        pincodes_to_add = [] # If no master map is loaded, we can't identify missing codes yet
 
 
     # --- 6. Download Missing Codes List & Quick Upload ---
@@ -311,6 +325,8 @@ if uploaded_file is not None:
                 except Exception as e:
                     st.error(f"❌ ERROR: Quick update failed. Check if file has 'Zip', 'Latitude', 'Longitude' columns filled correctly. Error: {e}")
 
+    elif not st.session_state['zip_lat_map']:
+         st.warning("Master Data is missing. Please upload the master file in the sidebar to enable calculation and check for missing codes.")
     else:
         st.info("No missing postal codes found! Calculation is complete.")
 
@@ -329,8 +345,9 @@ if uploaded_file is not None:
     
     final_display_df = df_final[display_cols_unique + [col for col in df_final.columns if col not in display_cols_unique and col not in ['Lat_Origin', 'Lon_Origin', 'Lat_Dest', 'Lon_Dest']]]
     
+    # Update highlight function to include MASTER_DATA_MISSING
     def highlight_missing(s):
-        return ['background-color: #ffcccc' if v == 'PINCODE_NOT_FOUND' else '' for v in s]
+        return ['background-color: #ffcccc' if (v == 'PINCODE_NOT_FOUND' or v == 'MASTER_DATA_MISSING') else '' for v in s]
 
     st.dataframe(
         final_display_df.style.apply(highlight_missing, subset=['RIS_Distance_KM']),
@@ -339,7 +356,11 @@ if uploaded_file is not None:
     
     # Summary
     not_found_count = (final_display_df['RIS_Distance_KM'] == 'PINCODE_NOT_FOUND').sum()
-    if not_found_count > 0:
+    data_missing_count = (final_display_df['RIS_Distance_KM'] == 'MASTER_DATA_MISSING').sum()
+    
+    if data_missing_count > 0:
+        st.error(f"❌ **{data_missing_count}** Rows have 'MASTER_DATA_MISSING'. Please upload the Master Pincode file in the sidebar (Section 7) to start calculation.")
+    elif not_found_count > 0:
         st.warning(f"⚠️ **{not_found_count}** Rows still show 'PINCODE_NOT_FOUND'. Please use Section 6 to update the missing codes.")
     else:
         st.success("🎉 All distances calculated successfully!")
