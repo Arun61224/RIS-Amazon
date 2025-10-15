@@ -34,7 +34,7 @@ def load_raw_data_optimized(file_path, file_data=None):
     """Loads master data supporting multi-format."""
     
     file_extension = file_path.split('.')[-1].lower()
-    df_raw = pd.DataFrame() # Initialize an empty DataFrame
+    df_raw = pd.DataFrame() 
     
     try:
         source = file_data if file_data is not None else file_path
@@ -135,26 +135,39 @@ if not st.session_state['master_data_loaded']:
     st.stop()
 # ------------------------------------------------------------------------------------------------------------------------------------
 
+# Define column names
+ORDER_ID_COL = 'Order ID'
+SHIP_FROM_COL = 'Ship From Postal Code'
+SHIP_TO_COL = 'Ship To Postal Code'
+SKU_COL = 'SKU'
+
 
 st.subheader("1. Upload Order File for RIS Calculation")
+# --- Download Template Section ---
+st.markdown("##### 📥 Download Input Template")
+df_template = pd.DataFrame(columns=[ORDER_ID_COL, SKU_COL, SHIP_FROM_COL, SHIP_TO_COL, 'Quantity (Optional)'])
+st.download_button(
+    label="Download Blank Template (CSV)",
+    data=df_template.to_csv(index=False).encode('utf-8'),
+    file_name='RIS_Input_Template.csv',
+    mime='text/csv',
+)
+
+
 # --- File Uploader ---
 uploaded_file = st.file_uploader(
-    "Upload your Order Data File (CSV, TXT, or Excel) - Must contain: 'Ship From Postal Code' & 'Ship To Postal Code'", 
+    f"Upload your Order Data File - Must contain: '{ORDER_ID_COL}', '{SKU_COL}', '{SHIP_FROM_COL}', and '{SHIP_TO_COL}'", 
     type=['csv', 'xlsx', 'xlsm', 'txt'],
     key="order_file_uploader"
 )
 
-SHIP_FROM_COL = 'Ship From Postal Code'
-SHIP_TO_COL = 'Ship To Postal Code'
-
 
 if uploaded_file is not None:
-    df_orders = pd.DataFrame() # FIX 1: Initialize df_orders safely
-    
     # --- Data Reading and Calculation Process (OPTIMIZED LOOKUP) ---
     with st.spinner('Processing and calculating distances...'):
         try:
-            dtype_map = {SHIP_FROM_COL: str, SHIP_TO_COL: str}
+            # Map all relevant input columns to string type
+            dtype_map = {ORDER_ID_COL: str, SKU_COL: str, SHIP_FROM_COL: str, SHIP_TO_COL: str}
             file_extension = uploaded_file.name.split('.')[-1].lower()
             
             if file_extension in ['xlsx', 'xlsm']:
@@ -166,11 +179,14 @@ if uploaded_file is not None:
             else:
                  raise ValueError("Unsupported order file format.")
 
-            required_cols = [SHIP_FROM_COL, SHIP_TO_COL]
+            # REQUIRED COLUMN CHECK NOW INCLUDES ORDER_ID and SKU
+            required_cols = [ORDER_ID_COL, SKU_COL, SHIP_FROM_COL, SHIP_TO_COL]
             if not all(col in df_orders.columns for col in required_cols):
                 st.error(f"❌ Error: The uploaded file must contain the columns: {required_cols}. Please check spelling.")
                 st.stop()
                 
+            df_orders[ORDER_ID_COL] = df_orders[ORDER_ID_COL].astype(str).str.strip()
+            df_orders[SKU_COL] = df_orders[SKU_COL].astype(str).str.strip()
             df_orders[SHIP_FROM_COL] = df_orders[SHIP_FROM_COL].astype(str).str.strip()
             df_orders[SHIP_TO_COL] = df_orders[SHIP_TO_COL].astype(str).str.strip()
 
@@ -232,7 +248,7 @@ if uploaded_file is not None:
             csv_missing_export = df_missing_codes_to_update.to_csv(index=False).encode('utf-8')
 
             st.download_button(
-                label="Download Missing Pincodes 📥",
+                label="Download Pincodes for Update 📥",
                 data=csv_missing_export,
                 file_name='Missing_Postal_Codes_To_Update.csv',
                 mime='text/csv',
@@ -274,14 +290,18 @@ if uploaded_file is not None:
     else:
         st.info("No missing postal codes found! Calculation is complete.")
 
-    # --- 5. Final Result Display (Moved to bottom) ---
+    # --- 5. Final Result Display and Download ---
     st.subheader("5. Full Calculated Results Preview")
     
-    display_cols = ['RIS_Distance_KM', SHIP_FROM_COL, SHIP_TO_COL] 
-    if 'Order ID' in df_final.columns: display_cols.insert(1, 'Order ID')
-    if 'ASIN' in df_final.columns: display_cols.insert(1, 'ASIN') 
-        
-    final_display_df = df_final[display_cols + [col for col in df_final.columns if col not in display_cols and col not in ['Lat_Origin', 'Lon_Origin', 'Lat_Dest', 'Lon_Dest']]]
+    # Columns to be displayed and downloaded 
+    display_cols = ['RIS_Distance_KM', ORDER_ID_COL, SKU_COL, SHIP_FROM_COL, SHIP_TO_COL] 
+    
+    # Add any other existing columns from the input file
+    for col in df_final.columns:
+        if col not in display_cols and col not in ['Lat_Origin', 'Lon_Origin', 'Lat_Dest', 'Lon_Dest', 'Status']:
+            display_cols.append(col)
+            
+    final_display_df = df_final[display_cols]
     
     def highlight_missing(s):
         return ['background-color: #ffcccc' if v == 'PINCODE_NOT_FOUND' else '' for v in s]
@@ -299,13 +319,27 @@ if uploaded_file is not None:
         st.success("🎉 All distances calculated successfully!")
         
     # Download final calculated result
-    csv_export = df_final[display_cols].to_csv(index=False).encode('utf-8')
-    st.download_button(
-        label="Download Full Results as CSV 💾",
-        data=csv_export,
-        file_name='RIS_Distance_Calculated_Results.csv',
-        mime='text/csv',
-    )
+    col_res_dl1, col_res_dl2 = st.columns(2)
+
+    with col_res_dl1:
+        csv_export = final_display_df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="Download Full Results as CSV 💾",
+            data=csv_export,
+            file_name='RIS_Distance_Calculated_Results.csv',
+            mime='text/csv',
+            use_container_width=True
+        )
+    
+    # Placeholder for MTR Merge Button
+    with col_res_dl2:
+        st.button(
+            label="Merge this data with MTR (Coming Soon)",
+            type="primary",
+            help="This button will integrate the calculated RIS KM with the MTR logic (yet to be implemented).",
+            use_container_width=True
+        )
+
 else:
     # If no file is uploaded in Section 1, prompt the user.
     st.info("👆 Please upload your Order Data File in Section 1 to start the calculation.")
