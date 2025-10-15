@@ -2,20 +2,21 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import io
-import time 
+import time
 
 # --- 1. Distance Calculation Logic (Same) ---
 
 def calculate_distance(lat1, lon1, lat2, lon2):
     """Calculates Great-Circle Distance (km) using Spherical Law of Cosines."""
-    R = 6371 
+    R = 6371  # Radius of Earth in kilometers
     co_lat1 = np.radians(90 - lat1)
     co_lat2 = np.radians(90 - lat2)
     delta_lon = np.radians(lon1 - lon2)
     
+    # Spherical Law of Cosines
     cos_c = (np.cos(co_lat1) * np.cos(co_lat2)) + \
             (np.sin(co_lat1) * np.sin(co_lat2) * np.cos(delta_lon))
-    cos_c = np.clip(cos_c, -1.0, 1.0)
+    cos_c = np.clip(cos_c, -1.0, 1.0) # Clip to handle floating point errors
     angular_distance = np.arccos(cos_c)
     return angular_distance * R
 
@@ -29,7 +30,7 @@ if 'zip_lon_map' not in st.session_state or not isinstance(st.session_state['zip
 if 'master_data_loaded' not in st.session_state:
     st.session_state['master_data_loaded'] = False
 
-@st.cache_data(show_spinner="Loading Postal Codes Data...")
+@st.cache_data(show_spinner="Loading Master Pincode Data...")
 def load_raw_data_optimized(file_path, file_data=None):
     """Loads master data supporting multi-format."""
     
@@ -136,27 +137,31 @@ if not st.session_state['master_data_loaded']:
 # ------------------------------------------------------------------------------------------------------------------------------------
 
 
-st.subheader("1. Upload Order File for RIS Calculation")
+st.subheader("1. Upload Order File for RIS Calculation (Include Sku & Quantity)")
 # --- File Uploader ---
 uploaded_file = st.file_uploader(
-    "Upload your Order Data File (CSV, TXT, or Excel) - Must contain: 'Ship From Postal Code' & 'Ship To Postal Code'", 
+    "Upload your Order Data File (CSV, TXT, or Excel) - Must contain: **'Ship From Postal Code'**, **'Ship To Postal Code'**, **'Sku'** & **'Quantity'**", 
     type=['csv', 'xlsx', 'xlsm', 'txt'],
     key="order_file_uploader"
 )
 
+# --- NEW/UPDATED CONSTANTS ---
 SHIP_FROM_COL = 'Ship From Postal Code'
 SHIP_TO_COL = 'Ship To Postal Code'
-
+SKU_COL = 'Sku' # Updated to match 'Sku' (capital S)
+QTY_COL = 'Quantity' # New constant for Quantity column
 
 if uploaded_file is not None:
-    df_orders = pd.DataFrame() # FIX 1: Initialize df_orders safely
+    df_orders = pd.DataFrame() # Initialize df_orders safely
     
     # --- Data Reading and Calculation Process (OPTIMIZED LOOKUP) ---
     with st.spinner('Processing and calculating distances...'):
         try:
-            dtype_map = {SHIP_FROM_COL: str, SHIP_TO_COL: str}
+            # Map for ensuring postal codes, SKU, and Quantity are read as strings
+            dtype_map = {SHIP_FROM_COL: str, SHIP_TO_COL: str, SKU_COL: str, QTY_COL: str} 
             file_extension = uploaded_file.name.split('.')[-1].lower()
             
+            # File reading logic
             if file_extension in ['xlsx', 'xlsm']:
                 df_orders = pd.read_excel(uploaded_file, dtype=dtype_map)
             elif file_extension == 'csv':
@@ -164,15 +169,23 @@ if uploaded_file is not None:
             elif file_extension == 'txt':
                  df_orders = pd.read_table(uploaded_file, dtype=dtype_map, sep=r'[,\t]+', engine='python', skipinitialspace=True, on_bad_lines='skip')
             else:
-                 raise ValueError("Unsupported order file format.")
+                raise ValueError("Unsupported order file format.")
 
-            required_cols = [SHIP_FROM_COL, SHIP_TO_COL]
+            # --- VALIDATION: REQUIRED COLUMNS (SKU_COL and QTY_COL added here) ---
+            required_cols = [SHIP_FROM_COL, SHIP_TO_COL, SKU_COL, QTY_COL]
+            df_orders.columns = df_orders.columns.str.strip() # Strip whitespace from column names
+            
             if not all(col in df_orders.columns for col in required_cols):
-                st.error(f"❌ Error: The uploaded file must contain the columns: {required_cols}. Please check spelling.")
+                st.error(f"❌ Error: The uploaded file must contain the columns: **{required_cols}**. Please check spelling.")
                 st.stop()
                 
+            # Data cleaning/typing
             df_orders[SHIP_FROM_COL] = df_orders[SHIP_FROM_COL].astype(str).str.strip()
             df_orders[SHIP_TO_COL] = df_orders[SHIP_TO_COL].astype(str).str.strip()
+            # Ensure Sku and Quantity are also clean
+            df_orders[SKU_COL] = df_orders[SKU_COL].astype(str).str.strip()
+            df_orders[QTY_COL] = df_orders[QTY_COL].astype(str).str.strip()
+
 
         except Exception as e:
             st.error(f"❌ Error reading or validating file: {e}")
@@ -189,7 +202,7 @@ if uploaded_file is not None:
         
         df_final = df_orders 
         
-        # Distance Calculate karna
+        # Distance Calculation
         df_final['RIS_Distance_KM'] = df_final.apply(lambda row: 
             calculate_distance(
                 row['Lat_Origin'], row['Lon_Origin'], 
@@ -220,7 +233,7 @@ if uploaded_file is not None:
     if pincodes_to_add:
         # Download Missing Codes (Left Column)
         with col_dl1:
-            st.error(f"🚨 **{len(pincodes_to_add)}** Missing Codes. Download file to update.")
+            st.error(f"🚨 **{len(pincodes_to_add)}** Missing Codes found in Master Data. Download file to update.")
             
             df_missing_codes_to_update = pd.DataFrame({
                 'Zip': pincodes_to_add, 
@@ -264,6 +277,7 @@ if uploaded_file is not None:
                     
                     st.success(f"✅ {len(new_lat_map)} Postal Codes added/updated in the current map! Please re-upload your order file (Section 1).")
                     
+                    # Reset the main uploader to prompt re-upload
                     st.session_state["order_file_uploader"] = None
                     time.sleep(1)
                     st.rerun()
@@ -277,11 +291,19 @@ if uploaded_file is not None:
     # --- 5. Final Result Display (Moved to bottom) ---
     st.subheader("5. Full Calculated Results Preview")
     
-    display_cols = ['RIS_Distance_KM', SHIP_FROM_COL, SHIP_TO_COL] 
+    # Define display columns, prioritizing SKU_COL and QTY_COL now
+    display_cols = ['RIS_Distance_KM', SHIP_FROM_COL, SHIP_TO_COL, SKU_COL, QTY_COL] 
+    
+    # Add other common useful columns if they exist
     if 'Order ID' in df_final.columns: display_cols.insert(1, 'Order ID')
-    if 'ASIN' in df_final.columns: display_cols.insert(1, 'ASIN') 
+    # If file had 'ASIN' but not 'Sku', or vice versa, we make sure to include it if possible
+    if 'ASIN' in df_final.columns and 'ASIN' != SKU_COL: display_cols.insert(1, 'ASIN') 
         
-    final_display_df = df_final[display_cols + [col for col in df_final.columns if col not in display_cols and col not in ['Lat_Origin', 'Lon_Origin', 'Lat_Dest', 'Lon_Dest']]]
+    # Get all unique display columns and then append other non-lookup columns
+    display_cols_unique = []
+    [display_cols_unique.append(x) for x in display_cols if x not in display_cols_unique]
+    
+    final_display_df = df_final[display_cols_unique + [col for col in df_final.columns if col not in display_cols_unique and col not in ['Lat_Origin', 'Lon_Origin', 'Lat_Dest', 'Lon_Dest']]]
     
     def highlight_missing(s):
         return ['background-color: #ffcccc' if v == 'PINCODE_NOT_FOUND' else '' for v in s]
@@ -299,11 +321,11 @@ if uploaded_file is not None:
         st.success("🎉 All distances calculated successfully!")
         
     # Download final calculated result
-    csv_export = df_final[display_cols].to_csv(index=False).encode('utf-8')
+    csv_export = df_final.to_csv(index=False).encode('utf-8')
     st.download_button(
         label="Download Full Results as CSV 💾",
         data=csv_export,
-        file_name='RIS_Distance_Calculated_Results.csv',
+        file_name='RIS_Distance_Calculated_Results_With_Sku_Quantity.csv',
         mime='text/csv',
     )
 else:
