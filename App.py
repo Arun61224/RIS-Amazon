@@ -49,16 +49,15 @@ def load_raw_data_optimized(file_path, file_data=None):
                 df_raw = pd.read_csv(source, dtype={'Zip': str}, encoding='latin-1')
 
         elif file_extension == 'txt':
-            # FIX: Use stricter separator for TXT (comma or tab only)
+            # FIX: Use on_bad_lines='skip' and a robust separator for TXT files
             try:
-                 df_raw = pd.read_table(source, dtype={'Zip': str}, sep=r'[,\t]+', engine='python', encoding='utf-8')
+                 df_raw = pd.read_table(source, dtype={'Zip': str}, sep=r'[,\t]+', engine='python', encoding='utf-8', skipinitialspace=True, on_bad_lines='skip')
             except:
-                df_raw = pd.read_table(source, dtype={'Zip': str}, sep=r'[,\t]+', engine='python', encoding='latin-1')
+                df_raw = pd.read_table(source, dtype={'Zip': str}, sep=r'[,\t]+', engine='python', encoding='latin-1', skipinitialspace=True, on_bad_lines='skip')
         
         else:
             raise ValueError("Unsupported file format.")
             
-        # Check if DataFrame is empty after reading (to catch ambiguous error source)
         if df_raw.empty:
              raise ValueError("File is empty or could not be read properly.")
             
@@ -160,7 +159,8 @@ if uploaded_file is not None:
             elif file_extension == 'csv':
                 df_orders = pd.read_csv(uploaded_file, dtype=dtype_map, encoding='utf-8')
             elif file_extension == 'txt':
-                 df_orders = pd.read_table(uploaded_file, dtype=dtype_map, sep=r'[,\t]+', engine='python') # FIX: Simpler TXT separator
+                 # FIX: Use on_bad_lines='skip' for robustness
+                 df_orders = pd.read_table(uploaded_file, dtype=dtype_map, sep=r'[,\t]+', engine='python', skipinitialspace=True, on_bad_lines='skip')
             else:
                  raise ValueError("Unsupported order file format.")
 
