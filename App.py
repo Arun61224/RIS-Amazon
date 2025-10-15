@@ -306,18 +306,17 @@ if uploaded_file is not None:
     # --- Download Buttons (The requested change is here) ---
     
     # ----------------------------------------------------
-    # NEW LOGIC: Filter data for distances >= 300 KM
-    # Use a temporary copy for numeric conversion and filtering
-    df_temp_filter = df_final.copy()
+    # FIX/NEW LOGIC: Filter data for distances >= 300 KM
     
-    # Convert 'RIS_Distance_KM' to numeric. 'PINCODE_NOT_FOUND' becomes NaN.
-    df_temp_filter['RIS_Distance_KM_Numeric'] = pd.to_numeric(df_temp_filter['RIS_Distance_KM'], errors='coerce')
+    # 1. Filter out rows where distance is not a valid number (i.e., 'PINCODE_NOT_FOUND')
+    df_calculated = df_final[df_final['RIS_Distance_KM'] != 'PINCODE_NOT_FOUND'].copy()
+    
+    # 2. Convert the filtered distance column to numeric type for comparison
+    # We use .loc to avoid the SettingWithCopyWarning and ensure the column is numeric
+    df_calculated.loc[:, 'RIS_Distance_KM'] = pd.to_numeric(df_calculated['RIS_Distance_KM'])
 
-    # Filter for distances >= 300 KM
-    df_300km_plus = df_temp_filter[df_temp_filter['RIS_Distance_KM_Numeric'] >= 300].copy()
-    
-    # Remove the temporary numeric column from the export data
-    df_300km_plus.drop(columns=['RIS_Distance_KM_Numeric'], inplace=True, errors='ignore')
+    # 3. Filter for distances >= 300 KM
+    df_300km_plus = df_calculated[df_calculated['RIS_Distance_KM'] >= 300].copy()
     
     # Create CSV export for 300km+ data
     csv_export_300km = df_300km_plus.to_csv(index=False).encode('utf-8')
