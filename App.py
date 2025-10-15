@@ -21,7 +21,7 @@ def calculate_distance(lat1, lon1, lat2, lon2):
 
 # --- 2. Data Loading and Caching (OPTIMIZED MULTI-FORMAT READER) ---
 
-# Global dictionaries for fast lookup
+# CRITICAL FIX: Ensure session state maps are dictionaries
 if 'zip_lat_map' not in st.session_state or not isinstance(st.session_state['zip_lat_map'], dict):
     st.session_state['zip_lat_map'] = {}
 if 'zip_lon_map' not in st.session_state or not isinstance(st.session_state['zip_lon_map'], dict):
@@ -136,21 +136,16 @@ if not st.session_state['master_data_loaded']:
 # ------------------------------------------------------------------------------------------------------------------------------------
 
 # Define column names
+ORDER_ID_COL = 'Order ID' # NEW ORDER ID COLUMN
 SHIP_FROM_COL = 'Ship From Postal Code'
 SHIP_TO_COL = 'Ship To Postal Code'
-SKU_COL = 'SKU' # NEW SKU COLUMN
+SKU_COL = 'SKU' 
+
 
 st.subheader("1. Upload Order File for RIS Calculation")
-# --- File Uploader ---
-uploaded_file = st.file_uploader(
-    f"Upload your Order Data File - Must contain: '{SKU_COL}', '{SHIP_FROM_COL}', and '{SHIP_TO_COL}'", 
-    type=['csv', 'xlsx', 'xlsm', 'txt'],
-    key="order_file_uploader"
-)
-
-# Download Template Section
+# --- Download Template Section ---
 st.markdown("##### 📥 Download Input Template")
-df_template = pd.DataFrame(columns=[SKU_COL, SHIP_FROM_COL, SHIP_TO_COL, 'Quantity (Optional)'])
+df_template = pd.DataFrame(columns=[ORDER_ID_COL, SKU_COL, SHIP_FROM_COL, SHIP_TO_COL, 'Quantity (Optional)'])
 st.download_button(
     label="Download Blank Template (CSV)",
     data=df_template.to_csv(index=False).encode('utf-8'),
@@ -159,12 +154,20 @@ st.download_button(
 )
 
 
+# --- File Uploader ---
+uploaded_file = st.file_uploader(
+    f"Upload your Order Data File - Must contain: '{ORDER_ID_COL}', '{SKU_COL}', '{SHIP_FROM_COL}', and '{SHIP_TO_COL}'", 
+    type=['csv', 'xlsx', 'xlsm', 'txt'],
+    key="order_file_uploader"
+)
+
+
 if uploaded_file is not None:
     # --- Data Reading and Calculation Process (OPTIMIZED LOOKUP) ---
     with st.spinner('Processing and calculating distances...'):
         try:
             # Map all relevant input columns to string type
-            dtype_map = {SKU_COL: str, SHIP_FROM_COL: str, SHIP_TO_COL: str}
+            dtype_map = {ORDER_ID_COL: str, SKU_COL: str, SHIP_FROM_COL: str, SHIP_TO_COL: str}
             file_extension = uploaded_file.name.split('.')[-1].lower()
             
             if file_extension in ['xlsx', 'xlsm']:
@@ -176,12 +179,13 @@ if uploaded_file is not None:
             else:
                  raise ValueError("Unsupported order file format.")
 
-            # REQUIRED COLUMN CHECK NOW INCLUDES SKU
-            required_cols = [SKU_COL, SHIP_FROM_COL, SHIP_TO_COL]
+            # REQUIRED COLUMN CHECK NOW INCLUDES ORDER_ID and SKU
+            required_cols = [ORDER_ID_COL, SKU_COL, SHIP_FROM_COL, SHIP_TO_COL]
             if not all(col in df_orders.columns for col in required_cols):
                 st.error(f"❌ Error: The uploaded file must contain the columns: {required_cols}. Please check spelling.")
                 st.stop()
                 
+            df_orders[ORDER_ID_COL] = df_orders[ORDER_ID_COL].astype(str).str.strip()
             df_orders[SKU_COL] = df_orders[SKU_COL].astype(str).str.strip()
             df_orders[SHIP_FROM_COL] = df_orders[SHIP_FROM_COL].astype(str).str.strip()
             df_orders[SHIP_TO_COL] = df_orders[SHIP_TO_COL].astype(str).str.strip()
@@ -289,10 +293,10 @@ if uploaded_file is not None:
     # --- 5. Final Result Display and Download ---
     st.subheader("5. Full Calculated Results Preview")
     
-    # Columns to be displayed and downloaded
-    display_cols = ['RIS_Distance_KM', SKU_COL, SHIP_FROM_COL, SHIP_TO_COL] # SKU ADDED
+    # Columns to be displayed and downloaded (ORDER ID ADDED)
+    display_cols = ['RIS_Distance_KM', ORDER_ID_COL, SKU_COL, SHIP_FROM_COL, SHIP_TO_COL] 
     
-    # Add other columns if they exist (like Order ID, etc.)
+    # Add any other existing columns from the input file
     for col in df_final.columns:
         if col not in display_cols and col not in ['Lat_Origin', 'Lon_Origin', 'Lat_Dest', 'Lon_Dest', 'Status']:
             display_cols.append(col)
