@@ -305,23 +305,40 @@ if uploaded_file is not None:
         
     # --- Download Buttons (The requested change is here) ---
     
+    # ----------------------------------------------------
+    # NEW LOGIC: Filter data for distances >= 300 KM
+    # Use a temporary copy for numeric conversion and filtering
+    df_temp_filter = df_final.copy()
+    
+    # Convert 'RIS_Distance_KM' to numeric. 'PINCODE_NOT_FOUND' becomes NaN.
+    df_temp_filter['RIS_Distance_KM_Numeric'] = pd.to_numeric(df_temp_filter['RIS_Distance_KM'], errors='coerce')
+
+    # Filter for distances >= 300 KM
+    df_300km_plus = df_temp_filter[df_temp_filter['RIS_Distance_KM_Numeric'] >= 300].copy()
+    
+    # Remove the temporary numeric column from the export data
+    df_300km_plus.drop(columns=['RIS_Distance_KM_Numeric'], inplace=True, errors='ignore')
+    
+    # Create CSV export for 300km+ data
+    csv_export_300km = df_300km_plus.to_csv(index=False).encode('utf-8')
+    # ----------------------------------------------------
+    
     # 1. Create columns for side-by-side buttons
     col_final_dl, col_final_merge = st.columns(2)
     
-    # Download final calculated result
-    csv_export = df_final.to_csv(index=False).encode('utf-8')
-    
     with col_final_dl:
+        # UPDATED Download Button for 300 KM+ data
         st.download_button(
-            label="Download Full Results as CSV 💾",
-            data=csv_export,
-            file_name='RIS_Distance_Calculated_Results.csv',
+            # Label changed to reflect the new functionality
+            label=f"Download Results (>= 300 KM) ({len(df_300km_plus)} rows) 📥",
+            data=csv_export_300km,
+            file_name='RIS_Distance_300KM_Plus_Results.csv', # File name changed
             mime='text/csv',
             use_container_width=True
         )
         
     with col_final_merge:
-        # New "Merge with MTR" button
+        # New "Merge with MTR" button (Placeholder remains)
         if st.button(
             label="Merge this Data with MTR",
             key="merge_with_mtr_button",
