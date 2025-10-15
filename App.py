@@ -5,6 +5,7 @@ import io
 import time 
 
 # --- 1. Distance Calculation Logic (Same) ---
+
 def calculate_distance(lat1, lon1, lat2, lon2):
     """Calculates Great-Circle Distance (km) using Spherical Law of Cosines."""
     R = 6371 
@@ -20,7 +21,7 @@ def calculate_distance(lat1, lon1, lat2, lon2):
 
 # --- 2. Data Loading and Caching (OPTIMIZED MULTI-FORMAT READER) ---
 
-# CRITICAL FIX: Ensure session state maps are dictionaries
+# Global dictionaries for fast lookup
 if 'zip_lat_map' not in st.session_state or not isinstance(st.session_state['zip_lat_map'], dict):
     st.session_state['zip_lat_map'] = {}
 if 'zip_lon_map' not in st.session_state or not isinstance(st.session_state['zip_lon_map'], dict):
@@ -33,6 +34,7 @@ def load_raw_data_optimized(file_path, file_data=None):
     """Loads master data supporting multi-format."""
     
     file_extension = file_path.split('.')[-1].lower()
+    df_raw = pd.DataFrame() # Initialize an empty DataFrame
     
     try:
         source = file_data if file_data is not None else file_path
@@ -47,13 +49,18 @@ def load_raw_data_optimized(file_path, file_data=None):
                 df_raw = pd.read_csv(source, dtype={'Zip': str}, encoding='latin-1')
 
         elif file_extension == 'txt':
+            # FIX: Use stricter separator for TXT (comma or tab only)
             try:
-                 df_raw = pd.read_table(source, dtype={'Zip': str}, sep=r'[,\t\s]+', engine='python')
+                 df_raw = pd.read_table(source, dtype={'Zip': str}, sep=r'[,\t]+', engine='python', encoding='utf-8')
             except:
-                df_raw = pd.read_table(source, dtype={'Zip': str}, sep=r'[,\t\s]+', engine='python', encoding='latin-1')
+                df_raw = pd.read_table(source, dtype={'Zip': str}, sep=r'[,\t]+', engine='python', encoding='latin-1')
         
         else:
             raise ValueError("Unsupported file format.")
+            
+        # Check if DataFrame is empty after reading (to catch ambiguous error source)
+        if df_raw.empty:
+             raise ValueError("File is empty or could not be read properly.")
             
     except Exception as e:
         raise Exception(f"Could not read the master data file. Error: {e}")
@@ -153,7 +160,7 @@ if uploaded_file is not None:
             elif file_extension == 'csv':
                 df_orders = pd.read_csv(uploaded_file, dtype=dtype_map, encoding='utf-8')
             elif file_extension == 'txt':
-                 df_orders = pd.read_table(uploaded_file, dtype=dtype_map, sep=r'[,\t\s]+', engine='python')
+                 df_orders = pd.read_table(uploaded_file, dtype=dtype_map, sep=r'[,\t]+', engine='python') # FIX: Simpler TXT separator
             else:
                  raise ValueError("Unsupported order file format.")
 
