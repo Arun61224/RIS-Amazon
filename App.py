@@ -18,51 +18,57 @@ def calculate_distance(lat1, lon1, lat2, lon2):
     angular_distance = np.arccos(cos_c)
     return angular_distance * R
 
-# --- 2. Data Loading and Caching (RIS Raw Data) ---
+# --- 2. Data Loading and Caching (CRITICAL OPTIMIZATION) ---
 
-if 'df_zip_data' not in st.session_state:
-    st.session_state['df_zip_data'] = pd.DataFrame()
+# Global dictionaries for fast lookup
+if 'zip_lat_map' not in st.session_state:
+    st.session_state['zip_lat_map'] = {}
+if 'zip_lon_map' not in st.session_state:
+    st.session_state['zip_lon_map'] = {}
 
-@st.cache_data(show_spinner="Loading ZIP-Lat/Lon Mapping Data...")
-def load_raw_data(file_path):
-    """Loads the main ZIP data file, targeting the 'RawData' sheet."""
+@st.cache_data(show_spinner="Loading 70,000 Postal Codes Data...")
+def load_raw_data_optimized(file_path):
+    """Loads XLSX and converts Lat/Lon into efficient Python Dictionaries for fast lookup."""
     try:
-        # pd.read_excel use karein, targeting 'RawData' sheet
-        df_raw = pd.read_excel(file_path, 
-                               dtype={'Zip': str}, 
-                               sheet_name='RawData') 
+        # Load XLSX file from 'RawData' sheet
+        df_raw = pd.read_excel(file_path, dtype={'Zip': str}, sheet_name='RawData') 
                                
-    except ValueError as ve:
-        raise FileNotFoundError(f"Error reading Excel sheet. Ensure the sheet is named 'RawData' and 'Zip', 'Latitude', 'Longitude' columns are present. Error: {ve}")
     except Exception as e:
         raise Exception(f"Could not read the file {file_path}. Is openpyxl installed? Error: {e}")
     
     required_raw_cols = ['Zip', 'Latitude', 'Longitude']
     if not all(col in df_raw.columns for col in required_raw_cols):
-        raise ValueError(f"Raw data file must contain columns: {required_raw_cols}. Found: {list(df_raw.columns)}")
+        raise ValueError(f"Raw data file must contain columns: {required_raw_cols}")
         
-    # Ensure Lat/Lon columns are floats (numbers) and remove any NaN rows if present in master data
+    # Convert Lat/Lon to numeric, handling potential errors by converting to NaN
     df_raw['Latitude'] = pd.to_numeric(df_raw['Latitude'], errors='coerce')
     df_raw['Longitude'] = pd.to_numeric(df_raw['Longitude'], errors='coerce')
     
-    df_raw = df_raw[required_raw_cols].set_index('Zip').dropna()
-    return df_raw
+    # Drop rows where Lat/Lon are missing and convert to dictionaries
+    df_raw = df_raw.dropna(subset=['Latitude', 'Longitude'])
+    
+    # CRITICAL: Create FAST lookup dictionaries (O(1) complexity)
+    lat_map = df_raw.set_index('Zip')['Latitude'].to_dict()
+    lon_map = df_raw.set_index('Zip')['Longitude'].to_dict()
+    
+    return lat_map, lon_map
 
 # --- 3. Main Streamlit Application UI (Execution Start) ---
 
 st.set_page_config(page_title="Bulk RIS Calculator", layout="wide")
 st.title("📦 Bulk RIS (Regional In Stock) Distance Calculator")
-st.markdown("Upload **Order Data** file to calculate distances. If any Postal Code is missing, you can **manually add** its details below.")
+st.markdown("**(70K Rows Optimized)** Upload **Order Data** file to calculate distances. If any Postal Code is missing, you can **manually add** its details below.")
 
 RAW_DATA_PATH = "RIS checker - Rawdata.xlsx"
 
+# Load the optimized dictionary maps
 try:
-    df_initial = load_raw_data(RAW_DATA_PATH)
-    if st.session_state['df_zip_data'].empty:
-        st.session_state['df_zip_data'] = df_initial
+    lat_map, lon_map = load_raw_data_optimized(RAW_DATA_PATH)
+    st.session_state['zip_lat_map'] = lat_map
+    st.session_state['zip_lon_map'] = lon_map
         
 except Exception as e:
-    st.error(f"❌ Critical Error: ZIP-Lat/Lon mapping file ('{RAW_DATA_PATH}') could not be loaded. Please ensure file is named **RIS checker - Rawdata.xlsx**, is in the root, and contains a sheet named **RawData**. Error: {e}")
+    st.error(f"❌ Critical Error: ZIP-Lat/Lon mapping file ('{RAW_DATA_PATH}') could not be loaded. Error: {e}")
     st.stop()
 
 
@@ -101,33 +107,28 @@ if uploaded_file is not None:
         
     st.subheader(f"2. Calculating RIS Distance for {len(df_orders)} Orders...")
 
-    # --- Calculation Process ---
-    df_current_zip_data = st.session_state['df_zip_data']
+    # --- Calculation Process (OPTIMIZED LOOKUP) ---
+    current_lat_map = st.session_state['zip_lat_map']
+    current_lon_map = st.session_state['zip_lon_map']
     
     with st.spinner('Matching Postal Codes and calculating distances...'):
         
-        # 1. Merge for Ship From Postal Code (Origin)
-        df_temp = df_orders.merge(
-            df_current_zip_data, 
-            left_on=SHIP_FROM_COL, 
-            right_index=True, 
-            how='left', 
-        ).rename(columns={'Latitude': 'Lat_Origin', 'Longitude': 'Lon_Origin'})
+        # 1. OPTIMIZED COORDINATE LOOKUP (No slow DataFrame merge)
+        # Use .get() method on the dictionary for instant lookup
+        df_orders['Lat_Origin'] = df_orders[SHIP_FROM_COL].apply(lambda x: current_lat_map.get(x))
+        df_orders['Lon_Origin'] = df_orders[SHIP_FROM_COL].apply(lambda x: current_lon_map.get(x))
+        df_orders['Lat_Dest'] = df_orders[SHIP_TO_COL].apply(lambda x: current_lat_map.get(x))
+        df_orders['Lon_Dest'] = df_orders[SHIP_TO_COL].apply(lambda x: current_lon_map.get(x))
+        
+        df_final = df_orders # Renamed for consistency
 
-        # 2. Merge for Ship To Postal Code (Destination)
-        df_final = df_temp.merge(
-            df_current_zip_data, 
-            left_on=SHIP_TO_COL, 
-            right_index=True, 
-            how='left', 
-        ).rename(columns={'Latitude': 'Lat_Dest', 'Longitude': 'Lon_Dest'})
-
-        # CRITICAL FIX: Ensure values are not NaN before calling distance function
+        # 2. Distance Calculate karna
         df_final['RIS_Distance_KM'] = df_final.apply(lambda row: 
             calculate_distance(
                 row['Lat_Origin'], row['Lon_Origin'], 
                 row['Lat_Dest'], row['Lon_Dest']
             ) 
+            # Check if all four Latitude/Longitude values are valid (not NaN)
             if pd.notna(row['Lat_Origin']) and pd.notna(row['Lon_Origin']) and \
                pd.notna(row['Lat_Dest']) and pd.notna(row['Lon_Dest'])
             else 'PINCODE_NOT_FOUND', axis=1
@@ -136,13 +137,13 @@ if uploaded_file is not None:
     
     # --- 4. Missing Postal Code Identification and Manual Entry ---
     
-    # Identify unique missing codes from Origin and Destination columns
+    # Identify unique missing codes using the NaN values from the lookup
     missing_origin = df_final[df_final['Lat_Origin'].isna()][SHIP_FROM_COL].unique()
     missing_dest = df_final[df_final['Lat_Dest'].isna()][SHIP_TO_COL].unique()
     
     all_missing_pincodes = pd.Series(np.concatenate([missing_origin, missing_dest])).unique()
-    # Filter out pincodes that were already in the master data (just in case)
-    pincodes_to_add = [p for p in all_missing_pincodes if p not in df_current_zip_data.index] 
+    # Pincodes to add are those that are missing AND not already in the session state map
+    pincodes_to_add = [p for p in all_missing_pincodes if p not in current_lat_map] 
 
 
     if pincodes_to_add:
@@ -160,17 +161,13 @@ if uploaded_file is not None:
                 submitted = st.form_submit_button("Update Data and Re-Calculate")
 
                 if submitted and new_zip and new_lat and new_lon:
-                    new_row = pd.DataFrame(
-                        [[new_lat, new_lon]],
-                        index=[new_zip],
-                        columns=['Latitude', 'Longitude']
-                    )
-                    
-                    st.session_state['df_zip_data'] = pd.concat([st.session_state['df_zip_data'], new_row])
+                    # Update the dictionaries in session state directly
+                    st.session_state['zip_lat_map'][new_zip] = new_lat
+                    st.session_state['zip_lon_map'][new_zip] = new_lon
                     
                     st.success(f"✅ Postal Code {new_zip} added successfully! Please re-upload your file or click the 'Update Data' button if you did not upload a new file.")
     
-    # --- 5. Final Result Display ---
+    # --- 5. Final Result Display (Same) ---
     st.subheader("5. Final Calculated Results")
     
     display_cols = ['RIS_Distance_KM', SHIP_FROM_COL, SHIP_TO_COL] 
@@ -194,14 +191,11 @@ if uploaded_file is not None:
     else:
         st.success("🎉 All distances calculated successfully!")
         
-    # --- 6. Download Missing Codes List (NEW FEATURE) ---
+    # --- 6. Download Missing Codes List ---
     st.subheader("6. Download Missing Postal Codes List")
     
     if pincodes_to_add:
-        # Create the DataFrame of missing codes
         df_missing_codes = pd.DataFrame(pincodes_to_add, columns=['Missing Postal Code'])
-        
-        # Create CSV data for download
         csv_missing_export = df_missing_codes.to_csv(index=False).encode('utf-8')
         
         st.warning("The following file contains all unique postal codes that were **not found** in your Raw Data for manual updating.")
