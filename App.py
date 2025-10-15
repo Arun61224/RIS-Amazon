@@ -2,9 +2,9 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import io
-# openpyxl ki zarurat hai .xlsx files padhne ke liye, yeh requirements.txt mein hona chahiye
+# openpyxl is needed for .xlsx files, must be in requirements.txt
 
-# --- 1. Distance Calculation Logic ---
+# --- 1. Distance Calculation Logic (Same) ---
 
 def calculate_distance(lat1, lon1, lat2, lon2):
     """Calculates Great-Circle Distance (km) using Spherical Law of Cosines."""
@@ -19,32 +19,32 @@ def calculate_distance(lat1, lon1, lat2, lon2):
     angular_distance = np.arccos(cos_c)
     return angular_distance * R
 
-# --- 2. Data Loading and Caching (CRITICAL FIX: READING XLSX) ---
+# --- 2. Data Loading and Caching (CRITICAL FIX: SHEET NAME) ---
 
 if 'df_zip_data' not in st.session_state:
     st.session_state['df_zip_data'] = pd.DataFrame()
 
 @st.cache_data(show_spinner="Loading ZIP-Lat/Lon Mapping Data...")
 def load_raw_data(file_path):
-    """Loads the main ZIP data file using pd.read_excel for .xlsx format."""
+    """Loads the main ZIP data file using pd.read_excel, targeting the 'RawData' sheet."""
     try:
-        # pd.read_excel use karein. Sheet index 0 (first sheet) assume karte hain.
-        # Agar aapki sheet ka naam 'RawData' hai, to sheet_name='RawData' use karein.
+        # Sheet ka naam 'RawData' set kiya gaya hai
         df_raw = pd.read_excel(file_path, 
                                dtype={'Zip': str}, 
-                               sheet_name=0) 
+                               sheet_name='RawData') 
                                
     except ValueError as ve:
-        # Sheet not found, ya file format issue
-        raise FileNotFoundError(f"Error reading Excel sheet. Check sheet_name or ensure 'Zip', 'Latitude', 'Longitude' columns are present. Error: {ve}")
+        # Sheet name ya columns not found error
+        raise FileNotFoundError(f"Error reading Excel sheet. Ensure the sheet is named 'RawData' and 'Zip', 'Latitude', 'Longitude' columns are present. Error: {ve}")
     except Exception as e:
-        # Other potential issues (like missing openpyxl)
+        # General error, could be missing openpyxl or corrupted file
         raise Exception(f"Could not read the file {file_path}. Is openpyxl installed? Error: {e}")
     
     # Column verification and index set
     required_raw_cols = ['Zip', 'Latitude', 'Longitude']
     if not all(col in df_raw.columns for col in required_raw_cols):
-        raise ValueError(f"Raw data file must contain columns: {required_raw_cols}")
+        # Agar column names mein space hai ya capitalization issue hai to yeh error aayega
+        raise ValueError(f"Raw data file must contain columns: {required_raw_cols}. Found: {list(df_raw.columns)}")
         
     df_raw = df_raw[required_raw_cols].set_index('Zip')
     return df_raw
@@ -64,9 +64,16 @@ try:
         st.session_state['df_zip_data'] = df_initial
         
 except Exception as e:
-    st.error(f"❌ Critical Error: ZIP-Lat/Lon mapping file ('{RAW_DATA_PATH}') could not be loaded. Please ensure file is named **RIS checker - Rawdata.xlsx** (Case-sensitive) and is in the repository root. Error: {e}")
+    st.error(f"❌ Critical Error: ZIP-Lat/Lon mapping file ('{RAW_DATA_PATH}') could not be loaded. Please ensure file is named **RIS checker - Rawdata.xlsx**, is in the root, and contains a sheet named **RawData**. Error: {e}")
     st.stop()
 
+
+# --- File Uploader and Calculation Logic (Wahi Rahega) ---
+# (The rest of the code logic for file upload, calculation, and manual entry remains the same as previous response)
+
+# ... (Insert the rest of the code from the previous response here) ...
+
+# ...
 
 # --- File Uploader ---
 uploaded_file = st.file_uploader(
@@ -81,7 +88,6 @@ if uploaded_file is not None:
             if uploaded_file.name.endswith('.csv'):
                 df_orders = pd.read_csv(uploaded_file, dtype={'Origin Pincode': str, 'Destination Pincode': str})
             else:
-                # User ki uploaded order file bhi XLSX ho sakti hai
                 df_orders = pd.read_excel(uploaded_file, dtype={'Origin Pincode': str, 'Destination Pincode': str})
 
             required_cols = ['Origin Pincode', 'Destination Pincode']
@@ -98,7 +104,7 @@ if uploaded_file is not None:
         
     st.subheader(f"2. Calculating RIS Distance for {len(df_orders)} Orders...")
 
-    # --- Calculation Process (Merge and Apply Logic remains same) ---
+    # --- Calculation Process ---
     df_current_zip_data = st.session_state['df_zip_data']
     
     with st.spinner('Matching Pincodes and calculating distances...'):
@@ -127,7 +133,7 @@ if uploaded_file is not None:
         )
     
     
-    # --- 4. Missing Pincode Identification and Manual Entry (Same) ---
+    # --- 4. Missing Pincode Identification and Manual Entry ---
     
     missing_origin = df_final[df_final['Lat_Origin'].isna()]['Origin Pincode'].unique()
     missing_dest = df_final[df_final['Lat_Dest'].isna()]['Destination Pincode'].unique()
@@ -160,7 +166,7 @@ if uploaded_file is not None:
                     
                     st.success(f"✅ Pincode {new_zip} added successfully! Please upload your file again or click the 'Update Data' button if you did not upload a new file.")
     
-    # --- 5. Final Result Display (Same) ---
+    # --- 5. Final Result Display ---
     st.subheader("5. Final Calculated Results")
     
     display_cols = ['RIS_Distance_KM', 'Origin Pincode', 'Destination Pincode']
