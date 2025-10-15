@@ -21,7 +21,7 @@ def calculate_distance(lat1, lon1, lat2, lon2):
 
 # --- 2. Data Loading and Caching (OPTIMIZED MULTI-FORMAT READER) ---
 
-# CRITICAL FIX: Ensure session state maps are dictionaries
+# Global dictionaries for fast lookup
 if 'zip_lat_map' not in st.session_state or not isinstance(st.session_state['zip_lat_map'], dict):
     st.session_state['zip_lat_map'] = {}
 if 'zip_lon_map' not in st.session_state or not isinstance(st.session_state['zip_lon_map'], dict):
@@ -34,7 +34,7 @@ def load_raw_data_optimized(file_path, file_data=None):
     """Loads master data supporting multi-format."""
     
     file_extension = file_path.split('.')[-1].lower()
-    df_raw = pd.DataFrame() # Initialize an empty DataFrame
+    df_raw = pd.DataFrame() 
     
     try:
         source = file_data if file_data is not None else file_path
@@ -49,7 +49,6 @@ def load_raw_data_optimized(file_path, file_data=None):
                 df_raw = pd.read_csv(source, dtype={'Zip': str}, encoding='latin-1')
 
         elif file_extension == 'txt':
-            # Robust TXT reading
             try:
                  df_raw = pd.read_table(source, dtype={'Zip': str}, sep=r'[,\t]+', engine='python', skipinitialspace=True, on_bad_lines='skip')
             except:
@@ -109,7 +108,6 @@ def handle_master_update(uploaded_file):
             file_name = uploaded_file.name
             new_lat_map, new_lon_map = load_raw_data_optimized(file_name, uploaded_file)
             
-            # Overwrite the session state maps
             st.session_state['zip_lat_map'] = new_lat_map
             st.session_state['zip_lon_map'] = new_lon_map
             st.session_state['master_data_loaded'] = True
@@ -129,7 +127,7 @@ with st.sidebar:
         type=['xlsx', 'xlsm', 'csv', 'txt'],
         key="master_data_upload_sidebar"
     )
-    handle_master_update(uploaded_master_file) # Run the update handler
+    handle_master_update(uploaded_master_file) 
 
 # Check if data is ready before proceeding to calculation sections
 if not st.session_state['master_data_loaded']:
@@ -137,24 +135,36 @@ if not st.session_state['master_data_loaded']:
     st.stop()
 # ------------------------------------------------------------------------------------------------------------------------------------
 
+# Define column names
+SHIP_FROM_COL = 'Ship From Postal Code'
+SHIP_TO_COL = 'Ship To Postal Code'
+SKU_COL = 'SKU' # NEW SKU COLUMN
 
 st.subheader("1. Upload Order File for RIS Calculation")
 # --- File Uploader ---
 uploaded_file = st.file_uploader(
-    "Upload your Order Data File (CSV, TXT, or Excel) - Must contain: 'Ship From Postal Code' & 'Ship To Postal Code'", 
+    f"Upload your Order Data File - Must contain: '{SKU_COL}', '{SHIP_FROM_COL}', and '{SHIP_TO_COL}'", 
     type=['csv', 'xlsx', 'xlsm', 'txt'],
     key="order_file_uploader"
 )
 
-SHIP_FROM_COL = 'Ship From Postal Code'
-SHIP_TO_COL = 'Ship To Postal Code'
+# Download Template Section
+st.markdown("##### 📥 Download Input Template")
+df_template = pd.DataFrame(columns=[SKU_COL, SHIP_FROM_COL, SHIP_TO_COL, 'Quantity (Optional)'])
+st.download_button(
+    label="Download Blank Template (CSV)",
+    data=df_template.to_csv(index=False).encode('utf-8'),
+    file_name='RIS_Input_Template.csv',
+    mime='text/csv',
+)
 
 
 if uploaded_file is not None:
     # --- Data Reading and Calculation Process (OPTIMIZED LOOKUP) ---
     with st.spinner('Processing and calculating distances...'):
         try:
-            dtype_map = {SHIP_FROM_COL: str, SHIP_TO_COL: str}
+            # Map all relevant input columns to string type
+            dtype_map = {SKU_COL: str, SHIP_FROM_COL: str, SHIP_TO_COL: str}
             file_extension = uploaded_file.name.split('.')[-1].lower()
             
             if file_extension in ['xlsx', 'xlsm']:
@@ -166,11 +176,13 @@ if uploaded_file is not None:
             else:
                  raise ValueError("Unsupported order file format.")
 
-            required_cols = [SHIP_FROM_COL, SHIP_TO_COL]
+            # REQUIRED COLUMN CHECK NOW INCLUDES SKU
+            required_cols = [SKU_COL, SHIP_FROM_COL, SHIP_TO_COL]
             if not all(col in df_orders.columns for col in required_cols):
                 st.error(f"❌ Error: The uploaded file must contain the columns: {required_cols}. Please check spelling.")
                 st.stop()
                 
+            df_orders[SKU_COL] = df_orders[SKU_COL].astype(str).str.strip()
             df_orders[SHIP_FROM_COL] = df_orders[SHIP_FROM_COL].astype(str).str.strip()
             df_orders[SHIP_TO_COL] = df_orders[SHIP_TO_COL].astype(str).str.strip()
 
@@ -187,8 +199,8 @@ if uploaded_file is not None:
         df_orders['Lat_Dest'] = df_orders[SHIP_TO_COL].apply(lambda x: current_lat_map.get(x))
         df_orders['Lon_Dest'] = df_orders[SHIP_TO_COL].apply(lambda x: current_lon_map.get(x))
         
-        df_final = df_orders # Renamed for consistency
-
+        df_final = df_orders 
+        
         # Distance Calculate karna
         df_final['RIS_Distance_KM'] = df_final.apply(lambda row: 
             calculate_distance(
@@ -232,7 +244,7 @@ if uploaded_file is not None:
             csv_missing_export = df_missing_codes_to_update.to_csv(index=False).encode('utf-8')
 
             st.download_button(
-                label="Download Missing Pincodes 📥",
+                label="Download Pincodes for Update 📥",
                 data=csv_missing_export,
                 file_name='Missing_Postal_Codes_To_Update.csv',
                 mime='text/csv',
@@ -243,7 +255,6 @@ if uploaded_file is not None:
         # Quick Upload (Right Column)
         with col_dl2:
             st.success("✔ Ready to Upload")
-            # --- Quick Upload File Uploader ---
             uploaded_quick_update_file = st.file_uploader(
                 "Upload updated **Missing Pincodes** file (.csv)",
                 type=['csv'],
@@ -255,9 +266,8 @@ if uploaded_file is not None:
                 st.info("Merging new Pincodes...")
                 try:
                     df_update = pd.read_csv(uploaded_quick_update_file, dtype={'Zip': str})
-                    df_update = df_update.dropna(subset=['Latitude', 'Longitude']) # Remove rows where user didn't fill data
+                    df_update = df_update.dropna(subset=['Latitude', 'Longitude'])
                     
-                    # Convert to maps and merge with session state maps
                     new_lat_map = df_update.set_index('Zip')['Latitude'].to_dict()
                     new_lon_map = df_update.set_index('Zip')['Longitude'].to_dict()
                     
@@ -266,7 +276,6 @@ if uploaded_file is not None:
                     
                     st.success(f"✅ {len(new_lat_map)} Postal Codes added/updated in the current map! Please re-upload your order file (Section 1).")
                     
-                    # Clear the order file uploader to force re-upload
                     st.session_state["order_file_uploader"] = None
                     time.sleep(1)
                     st.rerun()
@@ -277,14 +286,18 @@ if uploaded_file is not None:
     else:
         st.info("No missing postal codes found! Calculation is complete.")
 
-    # --- 5. Final Result Display (Moved to bottom) ---
+    # --- 5. Final Result Display and Download ---
     st.subheader("5. Full Calculated Results Preview")
     
-    display_cols = ['RIS_Distance_KM', SHIP_FROM_COL, SHIP_TO_COL] 
-    if 'Order ID' in df_final.columns: display_cols.insert(1, 'Order ID')
-    if 'ASIN' in df_final.columns: display_cols.insert(1, 'ASIN') 
-        
-    final_display_df = df_final[display_cols + [col for col in df_final.columns if col not in display_cols and col not in ['Lat_Origin', 'Lon_Origin', 'Lat_Dest', 'Lon_Dest']]]
+    # Columns to be displayed and downloaded
+    display_cols = ['RIS_Distance_KM', SKU_COL, SHIP_FROM_COL, SHIP_TO_COL] # SKU ADDED
+    
+    # Add other columns if they exist (like Order ID, etc.)
+    for col in df_final.columns:
+        if col not in display_cols and col not in ['Lat_Origin', 'Lon_Origin', 'Lat_Dest', 'Lon_Dest', 'Status']:
+            display_cols.append(col)
+            
+    final_display_df = df_final[display_cols]
     
     def highlight_missing(s):
         return ['background-color: #ffcccc' if v == 'PINCODE_NOT_FOUND' else '' for v in s]
@@ -301,11 +314,14 @@ if uploaded_file is not None:
     else:
         st.success("🎉 All distances calculated successfully!")
         
-    # Download final calculated result
-    csv_export = df_final[display_cols].to_csv(index=False).encode('utf-8')
+    # Download final calculated result (Uses final_display_df to maintain consistency)
+    csv_export = final_display_df.to_csv(index=False).encode('utf-8')
     st.download_button(
         label="Download Full Results as CSV 💾",
         data=csv_export,
         file_name='RIS_Distance_Calculated_Results.csv',
         mime='text/csv',
     )
+else:
+    # If no file is uploaded in Section 1, prompt the user.
+    st.info("👆 Please upload your Order Data File in Section 1 to start the calculation.")
