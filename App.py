@@ -41,6 +41,7 @@ def load_raw_data_optimized(file_path, file_data=None):
         source = file_data if file_data is not None else file_path
         
         if file_extension in ['xlsx', 'xlsm']:
+            # For Excel, we expect a specific sheet 'RawData'
             df_raw = pd.read_excel(source, dtype={'Zip': str}, sheet_name='RawData')
         
         elif file_extension == 'csv':
@@ -88,17 +89,25 @@ st.markdown("**(Optimized for large datasets)** Use Sections 1 & 2 for calculati
 
 RAW_DATA_PATH = "RIS checker - Rawdata.xlsx" 
 
-# Initial Load logic
+# --- FIX: Initial Load logic to handle missing default master file gracefully ---
 if not st.session_state['master_data_loaded']:
     try:
-        lat_map, lon_map = load_raw_data_optimized(RAW_DATA_PATH)
-        st.session_state['zip_lat_map'] = lat_map
-        st.session_state['zip_lon_map'] = lon_map
-        st.session_state['master_data_loaded'] = True
-        st.sidebar.success(f"Master Data loaded: {len(lat_map)} Postal Codes")
+        # We try to load the default file only if the maps are empty (first run)
+        if not st.session_state['zip_lat_map']:
+            lat_map, lon_map = load_raw_data_optimized(RAW_DATA_PATH)
+            st.session_state['zip_lat_map'] = lat_map
+            st.session_state['zip_lon_map'] = lon_map
+            st.session_state['master_data_loaded'] = True
+            st.sidebar.success(f"Master Data loaded: {len(lat_map)} Postal Codes (from default file)")
             
+    except FileNotFoundError:
+        # Graceful handling if the default file is missing
+        st.session_state['master_data_loaded'] = False
+        st.sidebar.warning(f"⚠️ Default Master File '{RAW_DATA_PATH}' not found. Please upload a file below.")
     except Exception as e:
-        st.sidebar.error(f"❌ Master Data Load Error: Initial load failed. Please ensure '{RAW_DATA_PATH}' is correct or upload a file in the sidebar. Error: {e}")
+        # Handle other loading errors
+        st.session_state['master_data_loaded'] = False
+        st.sidebar.error(f"❌ Master Data Load Error: Initial load failed. Error: {e}")
 
 
 # --- Section 7: Master Data Upload/Update (MOVED TO SIDEBAR) ---
@@ -107,6 +116,7 @@ def handle_master_update(uploaded_file):
         st.info("Uploading new Master Data...")
         try:
             file_name = uploaded_file.name
+            # load_raw_data_optimized is cleared by Streamlit's cache management on input change
             new_lat_map, new_lon_map = load_raw_data_optimized(file_name, uploaded_file)
             
             st.session_state['zip_lat_map'] = new_lat_map
@@ -114,7 +124,7 @@ def handle_master_update(uploaded_file):
             st.session_state['master_data_loaded'] = True
             
             st.success(f"✅ Master Data successfully updated! {len(new_lat_map)} Postal Codes loaded.")
-            load_raw_data_optimized.clear() 
+            load_raw_data_optimized.clear() # Clear cache explicitly for safety
             time.sleep(1)
             st.rerun()
 
@@ -130,10 +140,8 @@ with st.sidebar:
     )
     handle_master_update(uploaded_master_file) 
 
-# Check if data is ready before proceeding to calculation sections
-if not st.session_state['master_data_loaded']:
-    st.warning("Please resolve the Master Data Load Error (check file/path) or upload an updated file using the sidebar.")
-    st.stop()
+# --- Conditional stop removed: The App should now show upload options even if master data is missing ---
+
 # ------------------------------------------------------------------------------------------------------------------------------------
 
 
@@ -153,6 +161,11 @@ QTY_COL = 'Quantity'
 ORDER_ID_COL = 'Order Id' # Added this constant based on your header image
 
 if uploaded_file is not None:
+    # CRITICAL CHECK: Ensure master data map is available before calculation
+    if not st.session_state['zip_lat_map']:
+        st.error("⚠️ Master Postal Code data is required for calculation. Please upload the master file using the sidebar (Section 7).")
+        st.stop()
+        
     df_orders = pd.DataFrame() # Initialize df_orders safely
     
     # --- Data Reading and Calculation Process (OPTIMIZED LOOKUP) ---
@@ -304,7 +317,7 @@ if uploaded_file is not None:
     # --- 5. Final Result Display (Moved to bottom) ---
     st.subheader("5. Full Calculated Results Preview")
     
-    # Define display columns, prioritizing SKU_COL and QTY_COL now
+    # Define display columns, prioritizing ORDER_ID, SKU_COL and QTY_COL now
     display_cols = ['RIS_Distance_KM', ORDER_ID_COL, SHIP_FROM_COL, SHIP_TO_COL, SKU_COL, QTY_COL] 
     
     # Add other common useful columns if they exist
