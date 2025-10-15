@@ -102,18 +102,12 @@ if not st.session_state['master_data_loaded']:
 
 
 # --- Section 7: Master Data Upload/Update (MOVED TO SIDEBAR) ---
-with st.sidebar:
-    st.subheader("Master Data Update (Section 7)")
-    uploaded_master_file = st.file_uploader(
-        f"Upload updated master file (.xlsx, .xlsm, .csv, .txt). Excel needs 'RawData' sheet.",
-        type=['xlsx', 'xlsm', 'csv', 'txt']
-    )
-
-    if uploaded_master_file is not None:
+def handle_master_update(uploaded_file):
+    if uploaded_file is not None:
         st.info("Uploading new Master Data...")
         try:
-            file_name = uploaded_master_file.name
-            new_lat_map, new_lon_map = load_raw_data_optimized(file_name, uploaded_master_file)
+            file_name = uploaded_file.name
+            new_lat_map, new_lon_map = load_raw_data_optimized(file_name, uploaded_file)
             
             # Overwrite the session state maps
             st.session_state['zip_lat_map'] = new_lat_map
@@ -123,10 +117,19 @@ with st.sidebar:
             st.success(f"✅ Master Data successfully updated! {len(new_lat_map)} Postal Codes loaded.")
             load_raw_data_optimized.clear() 
             time.sleep(1)
-            st.rerun() # Rerun to refresh the app with new data
+            st.rerun()
 
         except Exception as e:
-            st.error(f"❌ ERROR: Updated file could not be processed. Error: {e}")
+            st.error(f"❌ ERROR: Updated Master file could not be processed. Error: {e}")
+
+with st.sidebar:
+    st.subheader("Master Data Update (Section 7)")
+    uploaded_master_file = st.file_uploader(
+        f"Upload updated master file (.xlsx, .xlsm, .csv, .txt). Excel needs 'RawData' sheet.",
+        type=['xlsx', 'xlsm', 'csv', 'txt'],
+        key="master_data_upload_sidebar"
+    )
+    handle_master_update(uploaded_master_file) # Run the update handler
 
 # Check if data is ready before proceeding to calculation sections
 if not st.session_state['master_data_loaded']:
@@ -209,13 +212,13 @@ if uploaded_file is not None:
     pincodes_to_add = [p for p in all_missing_pincodes if p not in current_lat_map] 
 
 
-    # --- 6. Download Missing Codes List & Final Results ---
-    st.subheader("6. Download Options")
+    # --- 6. Download Missing Codes List & Quick Upload ---
+    st.subheader("6. Data Update Workflow")
     
     col_dl1, col_dl2 = st.columns(2)
-
+    
     if pincodes_to_add:
-        # Download Missing Codes (Section 6)
+        # Download Missing Codes (Left Column)
         with col_dl1:
             st.error(f"🚨 **{len(pincodes_to_add)}** Missing Codes. Download file to update.")
             
@@ -229,33 +232,50 @@ if uploaded_file is not None:
             csv_missing_export = df_missing_codes_to_update.to_csv(index=False).encode('utf-8')
 
             st.download_button(
-                label="Download Pincodes for Update 📥",
+                label="Download Missing Pincodes 📥",
                 data=csv_missing_export,
                 file_name='Missing_Postal_Codes_To_Update.csv',
                 mime='text/csv',
                 use_container_width=True
             )
-            st.caption("Update data in this file and upload via **sidebar**.")
-            
-        # Display small summary of missing items
-        st.info("Missing Pincodes list is ready for download in the left column.")
+            st.caption("Update data in this file.")
         
+        # Quick Upload (Right Column)
+        with col_dl2:
+            st.success("✔ Ready to Upload")
+            # --- Quick Upload File Uploader ---
+            uploaded_quick_update_file = st.file_uploader(
+                "Upload updated **Missing Pincodes** file (.csv)",
+                type=['csv'],
+                key="quick_update_file_uploader"
+            )
+
+            # Handle Quick Upload
+            if uploaded_quick_update_file is not None:
+                st.info("Merging new Pincodes...")
+                try:
+                    df_update = pd.read_csv(uploaded_quick_update_file, dtype={'Zip': str})
+                    df_update = df_update.dropna(subset=['Latitude', 'Longitude']) # Remove rows where user didn't fill data
+                    
+                    # Convert to maps and merge with session state maps
+                    new_lat_map = df_update.set_index('Zip')['Latitude'].to_dict()
+                    new_lon_map = df_update.set_index('Zip')['Longitude'].to_dict()
+                    
+                    st.session_state['zip_lat_map'].update(new_lat_map)
+                    st.session_state['zip_lon_map'].update(new_lon_map)
+                    
+                    st.success(f"✅ {len(new_lat_map)} Postal Codes added/updated in the current map! Please re-upload your order file (Section 1).")
+                    
+                    # Clear the order file uploader to force re-upload
+                    st.session_state["order_file_uploader"] = None
+                    time.sleep(1)
+                    st.rerun()
+
+                except Exception as e:
+                    st.error(f"❌ ERROR: Quick update failed. Check if file has 'Zip', 'Latitude', 'Longitude' columns filled correctly. Error: {e}")
+
     else:
-        st.success("No missing postal codes found!")
-
-    # Download Final Results (Section 5)
-    with col_dl2:
-        st.markdown("##### Download Full Calculation Results")
-        
-        csv_export = df_final[display_cols].to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="Download Full Results as CSV 💾",
-            data=csv_export,
-            file_name='RIS_Distance_Calculated_Results.csv',
-            mime='text/csv',
-            use_container_width=True
-        )
-
+        st.info("No missing postal codes found! Calculation is complete.")
 
     # --- 5. Final Result Display (Moved to bottom) ---
     st.subheader("5. Full Calculated Results Preview")
@@ -277,6 +297,15 @@ if uploaded_file is not None:
     # Summary
     not_found_count = (final_display_df['RIS_Distance_KM'] == 'PINCODE_NOT_FOUND').sum()
     if not_found_count > 0:
-        st.warning(f"⚠️ **{not_found_count}** Rows still show 'PINCODE_NOT_FOUND'. Please update the missing codes.")
+        st.warning(f"⚠️ **{not_found_count}** Rows still show 'PINCODE_NOT_FOUND'. Please use Section 6 to update the missing codes.")
     else:
         st.success("🎉 All distances calculated successfully!")
+        
+    # Download final calculated result
+    csv_export = df_final[display_cols].to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="Download Full Results as CSV 💾",
+        data=csv_export,
+        file_name='RIS_Distance_Calculated_Results.csv',
+        mime='text/csv',
+    )
