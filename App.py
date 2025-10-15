@@ -28,7 +28,6 @@ if 'df_zip_data' not in st.session_state:
 def load_raw_data(file_path):
     """Loads the main ZIP data file, targeting the 'RawData' sheet."""
     try:
-        # pd.read_excel use karein, targeting 'RawData' sheet
         df_raw = pd.read_excel(file_path, 
                                dtype={'Zip': str}, 
                                sheet_name='RawData') 
@@ -38,12 +37,15 @@ def load_raw_data(file_path):
     except Exception as e:
         raise Exception(f"Could not read the file {file_path}. Is openpyxl installed? Error: {e}")
     
-    # Column verification and index set
     required_raw_cols = ['Zip', 'Latitude', 'Longitude']
     if not all(col in df_raw.columns for col in required_raw_cols):
         raise ValueError(f"Raw data file must contain columns: {required_raw_cols}. Found: {list(df_raw.columns)}")
         
-    df_raw = df_raw[required_raw_cols].set_index('Zip')
+    # Ensure Lat/Lon columns are floats (numbers)
+    df_raw['Latitude'] = pd.to_numeric(df_raw['Latitude'], errors='coerce')
+    df_raw['Longitude'] = pd.to_numeric(df_raw['Longitude'], errors='coerce')
+    
+    df_raw = df_raw[required_raw_cols].set_index('Zip').dropna() # NaN rows remove kiye
     return df_raw
 
 # --- 3. Main Streamlit Application UI (Execution Start) ---
@@ -66,11 +68,10 @@ except Exception as e:
 
 # --- File Uploader ---
 uploaded_file = st.file_uploader(
-    "1. Upload your Order Data File (CSV or Excel) - Must contain: 'Ship From Postal Code' & 'Ship To Postal Code'", # NEW TEXT
+    "1. Upload your Order Data File (CSV or Excel) - Must contain: 'Ship From Postal Code' & 'Ship To Postal Code'", 
     type=['csv', 'xlsx']
 )
 
-# New Column Names
 SHIP_FROM_COL = 'Ship From Postal Code'
 SHIP_TO_COL = 'Ship To Postal Code'
 
@@ -79,7 +80,6 @@ if uploaded_file is not None:
     # --- Data Reading (Order File) ---
     with st.spinner('Reading file...'):
         try:
-            # Read data, ensuring new columns are treated as strings
             dtype_map = {SHIP_FROM_COL: str, SHIP_TO_COL: str}
             
             if uploaded_file.name.endswith('.csv'):
@@ -87,7 +87,6 @@ if uploaded_file is not None:
             else:
                 df_orders = pd.read_excel(uploaded_file, dtype=dtype_map)
 
-            # Check for NEW required columns
             required_cols = [SHIP_FROM_COL, SHIP_TO_COL]
             if not all(col in df_orders.columns for col in required_cols):
                 st.error(f"❌ Error: The uploaded file must contain the columns: {required_cols}. Please check spelling.")
@@ -110,7 +109,7 @@ if uploaded_file is not None:
         # 1. Merge for Ship From Postal Code (Origin)
         df_temp = df_orders.merge(
             df_current_zip_data, 
-            left_on=SHIP_FROM_COL, # UPDATED
+            left_on=SHIP_FROM_COL, 
             right_index=True, 
             how='left', 
         ).rename(columns={'Latitude': 'Lat_Origin', 'Longitude': 'Lon_Origin'})
@@ -118,25 +117,26 @@ if uploaded_file is not None:
         # 2. Merge for Ship To Postal Code (Destination)
         df_final = df_temp.merge(
             df_current_zip_data, 
-            left_on=SHIP_TO_COL, # UPDATED
+            left_on=SHIP_TO_COL, 
             right_index=True, 
             how='left', 
         ).rename(columns={'Latitude': 'Lat_Dest', 'Longitude': 'Lon_Dest'})
 
-        # 3. Distance Calculate karna
+        # CRITICAL FIX: Ensure values are not NaN before calling distance function
         df_final['RIS_Distance_KM'] = df_final.apply(lambda row: 
             calculate_distance(
                 row['Lat_Origin'], row['Lon_Origin'], 
                 row['Lat_Dest'], row['Lon_Dest']
             ) 
-            if pd.notna(row['Lat_Origin']) and pd.notna(row['Lat_Dest'])
+            # Check if all four Latitude/Longitude values are valid (not NaN)
+            if pd.notna(row['Lat_Origin']) and pd.notna(row['Lon_Origin']) and \
+               pd.notna(row['Lat_Dest']) and pd.notna(row['Lon_Dest'])
             else 'PINCODE_NOT_FOUND', axis=1
         )
     
     
-    # --- 4. Missing Postal Code Identification and Manual Entry ---
+    # --- 4. Missing Postal Code Identification and Manual Entry (Same) ---
     
-    # Identify missing codes using new column names
     missing_origin = df_final[df_final['Lat_Origin'].isna()][SHIP_FROM_COL].unique()
     missing_dest = df_final[df_final['Lat_Dest'].isna()][SHIP_TO_COL].unique()
     
@@ -168,11 +168,10 @@ if uploaded_file is not None:
                     
                     st.success(f"✅ Postal Code {new_zip} added successfully! Please re-upload your file or click the 'Update Data' button if you did not upload a new file.")
     
-    # --- 5. Final Result Display ---
+    # --- 5. Final Result Display (Same) ---
     st.subheader("5. Final Calculated Results")
     
-    # Display columns using NEW names
-    display_cols = ['RIS_Distance_KM', SHIP_FROM_COL, SHIP_TO_COL] # UPDATED
+    display_cols = ['RIS_Distance_KM', SHIP_FROM_COL, SHIP_TO_COL] 
     if 'Order ID' in df_final.columns: display_cols.insert(1, 'Order ID')
     if 'ASIN' in df_final.columns: display_cols.insert(1, 'ASIN') 
         
