@@ -166,9 +166,19 @@ if uploaded_file is not None:
             if file_extension in ['xlsx', 'xlsm']:
                 df_orders = pd.read_excel(uploaded_file, dtype=dtype_map)
             elif file_extension == 'csv':
-                df_orders = pd.read_csv(uploaded_file, dtype=dtype_map, encoding='utf-8')
+                try:
+                    df_orders = pd.read_csv(uploaded_file, dtype=dtype_map, encoding='utf-8')
+                except:
+                    # FIX: Reset file pointer to 0 and try alternate encoding (latin-1) for CSV
+                    uploaded_file.seek(0)
+                    df_orders = pd.read_csv(uploaded_file, dtype=dtype_map, encoding='latin-1')
             elif file_extension == 'txt':
-                 df_orders = pd.read_table(uploaded_file, dtype=dtype_map, sep=r'[,\t]+', engine='python', skipinitialspace=True, on_bad_lines='skip')
+                try:
+                     df_orders = pd.read_table(uploaded_file, dtype=dtype_map, sep=r'[,\t]+', engine='python', skipinitialspace=True, on_bad_lines='skip')
+                except:
+                    # FIX: Reset file pointer to 0 and try alternate encoding (latin-1) for TXT
+                    uploaded_file.seek(0)
+                    df_orders = pd.read_table(uploaded_file, dtype=dtype_map, sep=r'[,\t]+', engine='python', encoding='latin-1', skipinitialspace=True, on_bad_lines='skip')
             else:
                 raise ValueError("Unsupported order file format.")
 
@@ -186,8 +196,7 @@ if uploaded_file is not None:
             df_orders[SKU_COL] = df_orders[SKU_COL].astype(str).str.strip()
             df_orders[ORDER_ID_COL] = df_orders[ORDER_ID_COL].astype(str).str.strip()
 
-            # FIX: Convert Quantity to numeric again, but now all other ID columns are properly cleaned as strings.
-            # This robust conversion should resolve the previous Streamlit style error.
+            # FIX: Convert Quantity to numeric. This is the crucial fix for Streamlit rendering.
             df_orders[QTY_COL] = pd.to_numeric(df_orders[QTY_COL].astype(str).str.strip(), errors='coerce')
 
 
