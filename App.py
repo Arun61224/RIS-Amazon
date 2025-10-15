@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import io
-# openpyxl is needed for .xlsx files, must be in requirements.txt
 
 # --- 1. Distance Calculation Logic (Same) ---
 
@@ -28,6 +27,7 @@ if 'df_zip_data' not in st.session_state:
 def load_raw_data(file_path):
     """Loads the main ZIP data file, targeting the 'RawData' sheet."""
     try:
+        # pd.read_excel use karein, targeting 'RawData' sheet
         df_raw = pd.read_excel(file_path, 
                                dtype={'Zip': str}, 
                                sheet_name='RawData') 
@@ -41,11 +41,11 @@ def load_raw_data(file_path):
     if not all(col in df_raw.columns for col in required_raw_cols):
         raise ValueError(f"Raw data file must contain columns: {required_raw_cols}. Found: {list(df_raw.columns)}")
         
-    # Ensure Lat/Lon columns are floats (numbers)
+    # Ensure Lat/Lon columns are floats (numbers) and remove any NaN rows if present in master data
     df_raw['Latitude'] = pd.to_numeric(df_raw['Latitude'], errors='coerce')
     df_raw['Longitude'] = pd.to_numeric(df_raw['Longitude'], errors='coerce')
     
-    df_raw = df_raw[required_raw_cols].set_index('Zip').dropna() # NaN rows remove kiye
+    df_raw = df_raw[required_raw_cols].set_index('Zip').dropna()
     return df_raw
 
 # --- 3. Main Streamlit Application UI (Execution Start) ---
@@ -128,20 +128,22 @@ if uploaded_file is not None:
                 row['Lat_Origin'], row['Lon_Origin'], 
                 row['Lat_Dest'], row['Lon_Dest']
             ) 
-            # Check if all four Latitude/Longitude values are valid (not NaN)
             if pd.notna(row['Lat_Origin']) and pd.notna(row['Lon_Origin']) and \
                pd.notna(row['Lat_Dest']) and pd.notna(row['Lon_Dest'])
             else 'PINCODE_NOT_FOUND', axis=1
         )
     
     
-    # --- 4. Missing Postal Code Identification and Manual Entry (Same) ---
+    # --- 4. Missing Postal Code Identification and Manual Entry ---
     
+    # Identify unique missing codes from Origin and Destination columns
     missing_origin = df_final[df_final['Lat_Origin'].isna()][SHIP_FROM_COL].unique()
     missing_dest = df_final[df_final['Lat_Dest'].isna()][SHIP_TO_COL].unique()
     
     all_missing_pincodes = pd.Series(np.concatenate([missing_origin, missing_dest])).unique()
-    pincodes_to_add = [p for p in all_missing_pincodes if p not in st.session_state['df_zip_data'].index]
+    # Filter out pincodes that were already in the master data (just in case)
+    pincodes_to_add = [p for p in all_missing_pincodes if p not in df_current_zip_data.index] 
+
 
     if pincodes_to_add:
         st.error(f"🚨 **{len(pincodes_to_add)}** Unique Postal Codes are **MISSING** from the Raw Data! (e.g., {', '.join(pincodes_to_add[:5])}...)")
@@ -168,7 +170,7 @@ if uploaded_file is not None:
                     
                     st.success(f"✅ Postal Code {new_zip} added successfully! Please re-upload your file or click the 'Update Data' button if you did not upload a new file.")
     
-    # --- 5. Final Result Display (Same) ---
+    # --- 5. Final Result Display ---
     st.subheader("5. Final Calculated Results")
     
     display_cols = ['RIS_Distance_KM', SHIP_FROM_COL, SHIP_TO_COL] 
@@ -192,10 +194,31 @@ if uploaded_file is not None:
     else:
         st.success("🎉 All distances calculated successfully!")
         
-    # Download button
+    # --- 6. Download Missing Codes List (NEW FEATURE) ---
+    st.subheader("6. Download Missing Postal Codes List")
+    
+    if pincodes_to_add:
+        # Create the DataFrame of missing codes
+        df_missing_codes = pd.DataFrame(pincodes_to_add, columns=['Missing Postal Code'])
+        
+        # Create CSV data for download
+        csv_missing_export = df_missing_codes.to_csv(index=False).encode('utf-8')
+        
+        st.warning("The following file contains all unique postal codes that were **not found** in your Raw Data for manual updating.")
+
+        st.download_button(
+            label="Download Pincode Note Found File 💾",
+            data=csv_missing_export,
+            file_name='Missing_Postal_Codes_To_Update.csv',
+            mime='text/csv',
+        )
+    else:
+        st.info("No missing postal codes found that require manual update.")
+        
+    # Download final calculated result
     csv_export = final_display_df.to_csv(index=False).encode('utf-8')
     st.download_button(
-        label="Download Results as CSV 💾",
+        label="Download Full Results as CSV 💾",
         data=csv_export,
         file_name='RIS_Distance_Calculated_Results.csv',
         mime='text/csv',
