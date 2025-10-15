@@ -2,13 +2,13 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import io
-import time 
+import time
 
 # --- 1. Distance Calculation Logic (Same) ---
 
 def calculate_distance(lat1, lon1, lat2, lon2):
     """Calculates Great-Circle Distance (km) using Spherical Law of Cosines."""
-    R = 6371 
+    R = 6371
     co_lat1 = np.radians(90 - lat1)
     co_lat2 = np.radians(90 - lat2)
     delta_lon = np.radians(lon1 - lon2)
@@ -87,7 +87,7 @@ st.title("📦 Bulk RIS (Regional In Stock) Distance Calculator")
 st.markdown("**(Optimized for large datasets)** Use Sections 1 & 2 for calculation. Use the sidebar to update your master Postal Code data.")
 
 # Assuming this file exists locally on the server where Streamlit is running
-RAW_DATA_PATH = "RIS checker - Rawdata.xlsx" 
+RAW_DATA_PATH = "RIS checker - Rawdata.xlsx"
 
 # Initial Load logic
 if not st.session_state['master_data_loaded']:
@@ -332,7 +332,8 @@ if uploaded_file is not None:
     # ----------------------------------------------------
     
     # 1. Create columns for side-by-side buttons
-    col_final_dl, col_final_merge = st.columns(2)
+    # Removed col_final_merge, now only using a single column for the remaining button
+    col_final_dl = st.columns(1)[0]
     
     with col_final_dl:
         # Download Button for 300 KM+ data
@@ -344,17 +345,8 @@ if uploaded_file is not None:
             use_container_width=True
         )
         
-    with col_final_merge:
-        # "Merge with MTR" button (Placeholder remains)
-        if st.button(
-            label="Merge this Data with MTR",
-            key="merge_with_mtr_button",
-            use_container_width=True,
-            help="This button is a placeholder. You would implement your custom logic here to merge RIS results with your MTR data."
-        ):
-            st.info("Merge with MTR function triggered! Please implement your specific data merging logic in the code.")
-            
     # --------------------------------------------------------
+    # Removed the 'Merge with MTR' button and its container logic entirely.
 
 else:
     # If no file is uploaded in Section 1, prompt the user.
