@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import io
+import time # Time module added for visual feedback
 
 # --- 1. Distance Calculation Logic (Same) ---
 
@@ -26,25 +27,34 @@ if 'zip_lat_map' not in st.session_state:
 if 'zip_lon_map' not in st.session_state:
     st.session_state['zip_lon_map'] = {}
 
-@st.cache_data(show_spinner="Loading 70,000 Postal Codes Data...")
-def load_raw_data_optimized(file_path):
-    """Loads XLSX and converts Lat/Lon into efficient Python Dictionaries for fast lookup."""
+# Use a separate key to track if the map has been loaded from the main file
+if 'master_data_loaded' not in st.session_state:
+    st.session_state['master_data_loaded'] = False
+
+@st.cache_data(show_spinner="Loading Postal Codes Data...")
+def load_raw_data_optimized(file_path, file_data=None):
+    """Loads XLSX/Uploaded file and converts Lat/Lon into efficient Python Dictionaries."""
     try:
-        df_raw = pd.read_excel(file_path, dtype={'Zip': str}, sheet_name='RawData') 
+        if file_data is not None:
+            # Load from uploaded file buffer
+            df_raw = pd.read_excel(file_data, dtype={'Zip': str}, sheet_name='RawData')
+        else:
+            # Load from file path (initial load)
+            df_raw = pd.read_excel(file_path, dtype={'Zip': str}, sheet_name='RawData') 
                                
     except Exception as e:
-        raise Exception(f"Could not read the file {file_path}. Is openpyxl installed? Error: {e}")
+        raise Exception(f"Could not read the master data file. Please check file path, format, and sheet name ('RawData'). Error: {e}")
     
     required_raw_cols = ['Zip', 'Latitude', 'Longitude']
     if not all(col in df_raw.columns for col in required_raw_cols):
-        raise ValueError(f"Raw data file must contain columns: {required_raw_cols}")
+        raise ValueError(f"Master data file must contain columns: {required_raw_cols}. Found: {list(df_raw.columns)}")
         
     df_raw['Latitude'] = pd.to_numeric(df_raw['Latitude'], errors='coerce')
     df_raw['Longitude'] = pd.to_numeric(df_raw['Longitude'], errors='coerce')
     
     df_raw = df_raw.dropna(subset=['Latitude', 'Longitude'])
     
-    # CRITICAL: Create FAST lookup dictionaries
+    # Create FAST lookup dictionaries
     lat_map = df_raw.set_index('Zip')['Latitude'].to_dict()
     lon_map = df_raw.set_index('Zip')['Longitude'].to_dict()
     
@@ -54,24 +64,63 @@ def load_raw_data_optimized(file_path):
 
 st.set_page_config(page_title="Bulk RIS Calculator", layout="wide")
 st.title("📦 Bulk RIS (Regional In Stock) Distance Calculator")
-st.markdown("**(70K Rows Optimized)** Upload **Order Data** file to calculate distances. Missing Postal Codes ki details file download karke update karein.")
+st.markdown("**(Optimized for large datasets)** Use Sections 1 & 2 for calculation. Use Section 7 to update your master Postal Code data.")
 
 RAW_DATA_PATH = "RIS checker - Rawdata.xlsx"
 
-try:
-    lat_map, lon_map = load_raw_data_optimized(RAW_DATA_PATH)
-    st.session_state['zip_lat_map'] = lat_map
-    st.session_state['zip_lon_map'] = lon_map
+# Initial Load or Re-load logic
+if not st.session_state['master_data_loaded']:
+    try:
+        lat_map, lon_map = load_raw_data_optimized(RAW_DATA_PATH)
+        st.session_state['zip_lat_map'] = lat_map
+        st.session_state['zip_lon_map'] = lon_map
+        st.session_state['master_data_loaded'] = True
+        st.sidebar.success(f"Master Data loaded: {len(lat_map)} Postal Codes")
+            
+    except Exception as e:
+        st.sidebar.error(f"❌ Master Data Load Error: {e}")
+
+
+# --- Section 7: Master Data Upload/Update (Moved to top for visibility) ---
+st.subheader("7. Upload Updated Master Postal Code File")
+uploaded_master_file = st.file_uploader(
+    f"Upload your updated master file (must be named '{RAW_DATA_PATH}', XLSX format, Sheet: 'RawData')",
+    type=['xlsx']
+)
+
+if uploaded_master_file is not None:
+    st.info("Uploading new Master Data...")
+    try:
+        # Load the new data from the uploaded buffer
+        new_lat_map, new_lon_map = load_raw_data_optimized(RAW_DATA_PATH, uploaded_master_file)
         
-except Exception as e:
-    st.error(f"❌ Critical Error: ZIP-Lat/Lon mapping file ('{RAW_DATA_PATH}') could not be loaded. Error: {e}")
+        # Overwrite the session state maps
+        st.session_state['zip_lat_map'] = new_lat_map
+        st.session_state['zip_lon_map'] = new_lon_map
+        st.session_state['master_data_loaded'] = True
+        
+        st.success(f"✅ Master Data successfully updated! {len(new_lat_map)} Postal Codes loaded. Please continue to Section 1.")
+        # Clear the cache for the loading function to ensure fresh load if app restarts
+        load_raw_data_optimized.clear() 
+        time.sleep(1)
+        st.rerun()
+
+    except Exception as e:
+        st.error(f"❌ ERROR: Updated file could not be processed. Please check the sheet name ('RawData') and column names (Zip, Latitude, Longitude). Error: {e}")
+
+# Check if data is ready before proceeding to calculation sections
+if not st.session_state['master_data_loaded']:
+    st.warning("Please resolve the Master Data Load Error (check file/path) or upload an updated file in Section 7.")
     st.stop()
+# ------------------------------------------------------------------------------------------------------------------------------------
 
 
+st.subheader("1. Upload Order File for RIS Calculation")
 # --- File Uploader ---
 uploaded_file = st.file_uploader(
-    "1. Upload your Order Data File (CSV or Excel) - Must contain: 'Ship From Postal Code' & 'Ship To Postal Code'", 
-    type=['csv', 'xlsx']
+    "Upload your Order Data File (CSV or Excel) - Must contain: 'Ship From Postal Code' & 'Ship To Postal Code'", 
+    type=['csv', 'xlsx'],
+    key="order_file_uploader"
 )
 
 SHIP_FROM_COL = 'Ship From Postal Code'
@@ -123,10 +172,10 @@ if uploaded_file is not None:
             else 'PINCODE_NOT_FOUND', axis=1
         )
     
-    st.subheader(f"2. Calculation Results for {len(df_orders)} Orders")
+    st.subheader("2. Calculation Results")
 
 
-    # --- 4. Missing Postal Code Identification and Download (UPDATED FEATURE) ---
+    # --- 4. Missing Postal Code Identification (PREPARE DOWNLOAD) ---
     
     missing_origin = df_final[df_final['Lat_Origin'].isna()][SHIP_FROM_COL].unique()
     missing_dest = df_final[df_final['Lat_Dest'].isna()][SHIP_TO_COL].unique()
@@ -134,44 +183,36 @@ if uploaded_file is not None:
     all_missing_pincodes = pd.Series(np.concatenate([missing_origin, missing_dest])).unique()
     pincodes_to_add = [p for p in all_missing_pincodes if p not in current_lat_map] 
 
+
+    # --- 6. Download Missing Codes List (Standalone Section) ---
+    st.subheader("6. Download Missing Postal Codes List")
+    
     if pincodes_to_add:
-        st.error(f"🚨 **{len(pincodes_to_add)}** Unique Postal Codes are **MISSING**! Manual update zaroori hai.")
+        st.error(f"🚨 **{len(pincodes_to_add)}** Unique Postal Codes are **MISSING** from the current Master Data.")
         
-        # New DataFrame structure for download/update
+        # Create the missing codes sheet structure for manual update
         df_missing_codes_to_update = pd.DataFrame({
             'Postal Code': pincodes_to_add,
-            'Latitude': [''] * len(pincodes_to_add), # Blank for manual entry
-            'Longitude': [''] * len(pincodes_to_add), # Blank for manual entry
+            'Latitude': [''] * len(pincodes_to_add), 
+            'Longitude': [''] * len(pincodes_to_add),
             'Status': ['UPDATE_REQUIRED'] * len(pincodes_to_add)
         })
         
         csv_missing_export = df_missing_codes_to_update.to_csv(index=False).encode('utf-8')
 
-        st.warning("📥 **Missing Pincodes Download**: Yeh file download karein, isme Latitude/Longitude bharein, aur fir **master `RIS checker - Rawdata.xlsx` file ko replace** kar dein. ")
+        st.warning("📥 **Missing Pincodes Download**: Yeh file download karein, isme Latitude/Longitude bharein, aur fir **Section 7** mein master file upload karke update karein.")
         
         st.download_button(
-            label="Download Pincode Note Found File (Update Sheet) 💾",
+            label="Download Pincodes for Update 💾",
             data=csv_missing_export,
             file_name='Missing_Postal_Codes_To_Update.csv',
             mime='text/csv',
         )
+    else:
+        st.info("No missing postal codes found that require manual update.")
         
-        # --- Small Manual Entry Form (Optional for quick fixes) ---
-        with st.expander("Or, Add Missing Pincodes One-by-One", expanded=False):
-            with st.form("missing_pincode_form"):
-                new_zip = st.selectbox("Select Postal Code to Add:", options=pincodes_to_add)
-                new_lat = st.number_input(f"Latitude for {new_zip}", format="%.6f")
-                new_lon = st.number_input(f"Longitude for {new_zip}", format="%.6f")
-                submitted = st.form_submit_button("Update Data and Re-Calculate")
-
-                if submitted and new_zip and new_lat and new_lon:
-                    # Update the dictionaries in session state directly
-                    st.session_state['zip_lat_map'][new_zip] = new_lat
-                    st.session_state['zip_lon_map'][new_zip] = new_lon
-                    st.success(f"✅ Postal Code {new_zip} added to temporary map! Please re-upload your file.")
-    
     # --- 5. Final Result Display ---
-    st.subheader("3. Final Calculated Results")
+    st.subheader("5. Full Calculated Results")
     
     display_cols = ['RIS_Distance_KM', SHIP_FROM_COL, SHIP_TO_COL] 
     if 'Order ID' in df_final.columns: display_cols.insert(1, 'Order ID')
@@ -190,7 +231,7 @@ if uploaded_file is not None:
     # Summary
     not_found_count = (final_display_df['RIS_Distance_KM'] == 'PINCODE_NOT_FOUND').sum()
     if not_found_count > 0:
-        st.warning(f"⚠️ **{not_found_count}** Rows still show 'PINCODE_NOT_FOUND'. Please update the missing codes in the file downloaded in Section 4.")
+        st.warning(f"⚠️ **{not_found_count}** Rows still show 'PINCODE_NOT_FOUND'. Please update the missing codes using the file downloaded in Section 6, and upload in Section 7.")
     else:
         st.success("🎉 All distances calculated successfully!")
         
