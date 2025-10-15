@@ -140,16 +140,17 @@ if not st.session_state['master_data_loaded']:
 st.subheader("1. Upload Order File for RIS Calculation (Include Sku & Quantity)")
 # --- File Uploader ---
 uploaded_file = st.file_uploader(
-    "Upload your Order Data File (CSV, TXT, or Excel) - Must contain: **'Ship From Postal Code'**, **'Ship To Postal Code'**, **'Sku'** & **'Quantity'**", 
+    "Upload your Order Data File (CSV, TXT, or Excel) - Must contain: **'Order Id'**, **'Ship From Postal Code'**, **'Ship To Postal Code'**, **'Sku'** & **'Quantity'**", 
     type=['csv', 'xlsx', 'xlsm', 'txt'],
     key="order_file_uploader"
 )
 
-# --- NEW/UPDATED CONSTANTS ---
+# --- NEW/UPDATED CONSTANTS (Based on user's Excel headers) ---
 SHIP_FROM_COL = 'Ship From Postal Code'
 SHIP_TO_COL = 'Ship To Postal Code'
-SKU_COL = 'Sku' # Updated to match 'Sku' (capital S)
-QTY_COL = 'Quantity' # New constant for Quantity column
+SKU_COL = 'Sku' 
+QTY_COL = 'Quantity' 
+ORDER_ID_COL = 'Order Id' # Added this constant based on your header image
 
 if uploaded_file is not None:
     df_orders = pd.DataFrame() # Initialize df_orders safely
@@ -157,13 +158,12 @@ if uploaded_file is not None:
     # --- Data Reading and Calculation Process (OPTIMIZED LOOKUP) ---
     with st.spinner('Processing and calculating distances...'):
         try:
-            # Map: Pincodes/Sku as strings, but Quantity will be converted to numeric after reading
-            dtype_map = {SHIP_FROM_COL: str, SHIP_TO_COL: str, SKU_COL: str} 
+            # Map: Pincodes/Sku/Order Id should be read as strings for safe handling
+            dtype_map = {SHIP_FROM_COL: str, SHIP_TO_COL: str, SKU_COL: str, ORDER_ID_COL: str} 
             file_extension = uploaded_file.name.split('.')[-1].lower()
             
             # File reading logic
             if file_extension in ['xlsx', 'xlsm']:
-                # Read Quantity as string initially to prevent reading errors, then coerce to numeric
                 df_orders = pd.read_excel(uploaded_file, dtype=dtype_map)
             elif file_extension == 'csv':
                 df_orders = pd.read_csv(uploaded_file, dtype=dtype_map, encoding='utf-8')
@@ -172,8 +172,8 @@ if uploaded_file is not None:
             else:
                 raise ValueError("Unsupported order file format.")
 
-            # --- VALIDATION: REQUIRED COLUMNS (SKU_COL and QTY_COL added here) ---
-            required_cols = [SHIP_FROM_COL, SHIP_TO_COL, SKU_COL, QTY_COL]
+            # --- VALIDATION: REQUIRED COLUMNS (Checking all 5 expected columns) ---
+            required_cols = [ORDER_ID_COL, SHIP_FROM_COL, SHIP_TO_COL, SKU_COL, QTY_COL]
             df_orders.columns = df_orders.columns.str.strip() # Strip whitespace from column names
             
             if not all(col in df_orders.columns for col in required_cols):
@@ -183,10 +183,11 @@ if uploaded_file is not None:
             # Data cleaning/typing
             df_orders[SHIP_FROM_COL] = df_orders[SHIP_FROM_COL].astype(str).str.strip()
             df_orders[SHIP_TO_COL] = df_orders[SHIP_TO_COL].astype(str).str.strip()
-            # Ensure Sku is clean
             df_orders[SKU_COL] = df_orders[SKU_COL].astype(str).str.strip()
-            
-            # FIX: Convert Quantity to numeric, forcing errors to NaN. This resolves the Streamlit data frame display issue.
+            df_orders[ORDER_ID_COL] = df_orders[ORDER_ID_COL].astype(str).str.strip()
+
+            # FIX: Convert Quantity to numeric again, but now all other ID columns are properly cleaned as strings.
+            # This robust conversion should resolve the previous Streamlit style error.
             df_orders[QTY_COL] = pd.to_numeric(df_orders[QTY_COL].astype(str).str.strip(), errors='coerce')
 
 
@@ -295,11 +296,9 @@ if uploaded_file is not None:
     st.subheader("5. Full Calculated Results Preview")
     
     # Define display columns, prioritizing SKU_COL and QTY_COL now
-    display_cols = ['RIS_Distance_KM', SHIP_FROM_COL, SHIP_TO_COL, SKU_COL, QTY_COL] 
+    display_cols = ['RIS_Distance_KM', ORDER_ID_COL, SHIP_FROM_COL, SHIP_TO_COL, SKU_COL, QTY_COL] 
     
     # Add other common useful columns if they exist
-    if 'Order Id' in df_final.columns: display_cols.insert(1, 'Order Id')
-    # If file had 'ASIN' but not 'Sku', or vice versa, we make sure to include it if possible
     if 'ASIN' in df_final.columns and 'ASIN' != SKU_COL: display_cols.insert(1, 'ASIN') 
         
     # Get all unique display columns and then append other non-lookup columns
