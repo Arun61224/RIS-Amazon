@@ -5,7 +5,6 @@ import io
 import time 
 
 # --- 1. Distance Calculation Logic (Same) ---
-
 def calculate_distance(lat1, lon1, lat2, lon2):
     """Calculates Great-Circle Distance (km) using Spherical Law of Cosines."""
     R = 6371 
@@ -21,37 +20,33 @@ def calculate_distance(lat1, lon1, lat2, lon2):
 
 # --- 2. Data Loading and Caching (OPTIMIZED MULTI-FORMAT READER) ---
 
-# Global dictionaries for fast lookup
-if 'zip_lat_map' not in st.session_state:
+# CRITICAL FIX: Ensure session state maps are dictionaries
+if 'zip_lat_map' not in st.session_state or not isinstance(st.session_state['zip_lat_map'], dict):
     st.session_state['zip_lat_map'] = {}
-if 'zip_lon_map' not in st.session_state:
+if 'zip_lon_map' not in st.session_state or not isinstance(st.session_state['zip_lon_map'], dict):
     st.session_state['zip_lon_map'] = {}
 if 'master_data_loaded' not in st.session_state:
     st.session_state['master_data_loaded'] = False
 
 @st.cache_data(show_spinner="Loading Postal Codes Data...")
 def load_raw_data_optimized(file_path, file_data=None):
-    """Loads master data supporting .xlsx, .xlsm, .csv, and .txt formats."""
+    """Loads master data supporting multi-format."""
     
     file_extension = file_path.split('.')[-1].lower()
     
     try:
-        # Determine the source (uploaded file buffer or file path)
         source = file_data if file_data is not None else file_path
         
         if file_extension in ['xlsx', 'xlsm']:
-            # For Excel formats, use read_excel
             df_raw = pd.read_excel(source, dtype={'Zip': str}, sheet_name='RawData')
         
         elif file_extension == 'csv':
-            # For CSV, try standard UTF-8/latin-1 encoding
             try:
                 df_raw = pd.read_csv(source, dtype={'Zip': str}, encoding='utf-8')
             except:
                 df_raw = pd.read_csv(source, dtype={'Zip': str}, encoding='latin-1')
 
         elif file_extension == 'txt':
-            # For TXT, assume tab or space delimiter and try multiple encodings
             try:
                  df_raw = pd.read_table(source, dtype={'Zip': str}, sep=r'[,\t\s]+', engine='python')
             except:
@@ -61,10 +56,9 @@ def load_raw_data_optimized(file_path, file_data=None):
             raise ValueError("Unsupported file format.")
             
     except Exception as e:
-        raise Exception(f"Could not read the master data file ({file_extension}). Check Sheet ('RawData' for Excel) and column names. Error: {e}")
+        raise Exception(f"Could not read the master data file. Error: {e}")
     
     required_raw_cols = ['Zip', 'Latitude', 'Longitude']
-    # Check column existence case-insensitively just in case
     df_raw.columns = df_raw.columns.str.strip()
     
     if not all(col in df_raw.columns for col in required_raw_cols):
@@ -75,7 +69,6 @@ def load_raw_data_optimized(file_path, file_data=None):
     
     df_raw = df_raw.dropna(subset=['Latitude', 'Longitude'])
     
-    # Create FAST lookup dictionaries
     lat_map = df_raw.set_index('Zip')['Latitude'].to_dict()
     lon_map = df_raw.set_index('Zip')['Longitude'].to_dict()
     
@@ -87,13 +80,11 @@ st.set_page_config(page_title="Bulk RIS Calculator", layout="wide")
 st.title("📦 Bulk RIS (Regional In Stock) Distance Calculator")
 st.markdown("**(Optimized for large datasets)** Use Sections 1 & 2 for calculation. Use Section 7 to update your master Postal Code data.")
 
-# Note: Master file ka naam/format ab upload par nirbhar karega, lekin initial load ke liye hum .xlsx hi rakhenge
 RAW_DATA_PATH = "RIS checker - Rawdata.xlsx" 
 
 # Initial Load logic
 if not st.session_state['master_data_loaded']:
     try:
-        # We assume the initial file is XLSX unless replaced
         lat_map, lon_map = load_raw_data_optimized(RAW_DATA_PATH)
         st.session_state['zip_lat_map'] = lat_map
         st.session_state['zip_lon_map'] = lon_map
@@ -104,7 +95,7 @@ if not st.session_state['master_data_loaded']:
         st.sidebar.error(f"❌ Master Data Load Error: Initial load failed. Please ensure '{RAW_DATA_PATH}' is correct or upload a file in Section 7. Error: {e}")
 
 
-# --- Section 7: Master Data Upload/Update (MULTI-FORMAT) ---
+# --- Section 7: Master Data Upload/Update ---
 st.subheader("7. Upload Updated Master Postal Code File")
 uploaded_master_file = st.file_uploader(
     f"Upload your updated master file (.xlsx, .xlsm, .csv, .txt). Excel files need 'RawData' sheet.",
@@ -114,7 +105,6 @@ uploaded_master_file = st.file_uploader(
 if uploaded_master_file is not None:
     st.info("Uploading new Master Data...")
     try:
-        # Load the new data from the uploaded buffer (we pass the filename and the buffer)
         file_name = uploaded_master_file.name
         new_lat_map, new_lon_map = load_raw_data_optimized(file_name, uploaded_master_file)
         
@@ -124,13 +114,12 @@ if uploaded_master_file is not None:
         st.session_state['master_data_loaded'] = True
         
         st.success(f"✅ Master Data successfully updated! {len(new_lat_map)} Postal Codes loaded. Please continue to Section 1.")
-        # Clear the cache for the loading function to ensure fresh load if app restarts
         load_raw_data_optimized.clear() 
         time.sleep(1)
         st.rerun()
 
     except Exception as e:
-        st.error(f"❌ ERROR: Updated file could not be processed. Please check file format and ensure required columns (Zip, Latitude, Longitude) are correct. Error: {e}")
+        st.error(f"❌ ERROR: Updated file could not be processed. Error: {e}")
 
 
 # Check if data is ready before proceeding to calculation sections
@@ -141,7 +130,7 @@ if not st.session_state['master_data_loaded']:
 
 
 st.subheader("1. Upload Order File for RIS Calculation")
-# --- File Uploader (MULTI-FORMAT) ---
+# --- File Uploader ---
 uploaded_file = st.file_uploader(
     "Upload your Order Data File (CSV, TXT, or Excel) - Must contain: 'Ship From Postal Code' & 'Ship To Postal Code'", 
     type=['csv', 'xlsx', 'xlsm', 'txt'],
@@ -221,7 +210,7 @@ if uploaded_file is not None:
         st.error(f"🚨 **{len(pincodes_to_add)}** Unique Postal Codes are **MISSING** from the current Master Data.")
         
         df_missing_codes_to_update = pd.DataFrame({
-            'Zip': pincodes_to_add, # Renamed to Zip to match master data
+            'Zip': pincodes_to_add, 
             'Latitude': [''] * len(pincodes_to_add), 
             'Longitude': [''] * len(pincodes_to_add),
             'Status': ['UPDATE_REQUIRED'] * len(pincodes_to_add)
